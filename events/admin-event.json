@@ -1,0 +1,17 @@
+{
+  "rawPath": "/mcp/admin",
+  "requestContext": {
+    "http": {
+      "method": "POST"
+    }
+  },
+  "headers": {
+    "authorization": "Bearer YOUR_JWT_TOKEN_HERE",
+    "client-country-code": "MY",
+    "content-type": "application/json"
+  },
+  "queryStringParameters": {
+    "currency": "MYR"
+  },
+  "body": "{\"conversation\":[{\"role\":\"user\",\"content\":\"How many categories do we have?\"}]}"
+}

@@ -1,0 +1,49 @@
+version = 0.1
+
+# ──────────────────────────────────────────────
+# Default build settings (shared across all envs)
+# ──────────────────────────────────────────────
+[default.build.parameters]
+cached = true
+parallel = true
+
+# ──────────────────────────────────────────────
+# Dev environment
+# ──────────────────────────────────────────────
+[dev.deploy.parameters]
+stack_name          = "reso-online-store-mcp-dev"
+resolve_s3          = true
+capabilities        = "CAPABILITY_IAM"
+region              = "ap-southeast-1"
+confirm_changeset   = false
+fail_on_empty_changeset = false
+parameter_overrides = [
+  "Environment=dev",
+  "OnlineStoreServerUrl=https://dev-api.reso-store.com",
+  "OpenAiModel=gpt-4o",
+  "MaxIterations=20",
+  "MaxTotalTokens=200000",
+  "AllowedOrigins=*"
+]
+
+# ──────────────────────────────────────────────
+# Production environment
+# ──────────────────────────────────────────────
+[prod.deploy.parameters]
+stack_name          = "reso-online-store-mcp-prod"
+resolve_s3          = true
+capabilities        = "CAPABILITY_IAM"
+region              = "ap-southeast-1"
+confirm_changeset   = true
+fail_on_empty_changeset = false
+parameter_overrides = [
+  "Environment=prod",
+  "OnlineStoreServerUrl=https://api.reso-store.com",
+  "OpenAiModel=gpt-4o",
+  "MaxIterations=20",
+  "MaxTotalTokens=200000",
+  "AllowedOrigins=https://reso-store.com"
+  # Uncomment to enable custom domain:
+  # "DomainName=mcp.reso-store.com",
+  # "AcmCertificateArn=arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT_ID"
+]

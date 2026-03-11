@@ -1,0 +1,206 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: RESO Online Store MCP Lambda - Agentic AI layer over the online-store-server
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Deployment environment
+
+  OnlineStoreServerUrl:
+    Type: String
+    Description: Base URL of the online-store-server (e.g. https://api.reso-store.com)
+
+  OpenAiApiKeyParam:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /reso-mcp/openai-api-key
+    Description: SSM Parameter Store path for the OpenAI API key (SecureString)
+
+  OpenAiModel:
+    Type: String
+    Default: gpt-4o
+    Description: OpenAI model to use for the agentic loop
+
+  MaxIterations:
+    Type: Number
+    Default: 20
+    Description: Maximum number of agentic loop iterations per request
+
+  MaxTotalTokens:
+    Type: Number
+    Default: 200000
+    Description: Maximum cumulative tokens (input + output) per request
+
+  AllowedOrigins:
+    Type: String
+    Default: '*'
+    Description: CORS allowed origins for the Lambda Function URL (comma-separated, or *)
+
+  # Optional custom domain support
+  DomainName:
+    Type: String
+    Default: ''
+    Description: Custom domain name for CloudFront (e.g. mcp.reso-store.com). Leave empty to skip.
+
+  AcmCertificateArn:
+    Type: String
+    Default: ''
+    Description: ACM certificate ARN (must be in us-east-1) for the custom domain. Required if DomainName is set.
+
+Conditions:
+  HasCustomDomain: !Not [!Equals [!Ref DomainName, '']]
+
+Globals:
+  Function:
+    Timeout: 900
+    MemorySize: 512
+    Runtime: nodejs20.x
+    Architectures:
+      - x86_64
+
+Resources:
+
+  # ─────────────────────────────────────────────────────────────
+  # Lambda Function
+  # ─────────────────────────────────────────────────────────────
+  McpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub reso-online-store-mcp-${Environment}
+      Handler: dist/index.handler
+      CodeUri: .
+      Description: MCP agentic Lambda for the RESO Online Store
+      FunctionUrlConfig:
+        AuthType: AWS_IAM
+        InvokeMode: RESPONSE_STREAM
+        Cors:
+          AllowOrigins:
+            - !Ref AllowedOrigins
+          AllowMethods:
+            - POST
+            - GET
+            - OPTIONS
+          AllowHeaders:
+            - Authorization
+            - Content-Type
+            - client-country-code
+          MaxAge: 300
+      Environment:
+        Variables:
+          NODE_ENV: !Ref Environment
+          ONLINE_STORE_SERVER_URL: !Ref OnlineStoreServerUrl
+          OPENAI_API_KEY: !Ref OpenAiApiKeyParam
+          OPENAI_MODEL: !Ref OpenAiModel
+          MAX_ITERATIONS: !Ref MaxIterations
+          MAX_TOTAL_TOKENS: !Ref MaxTotalTokens
+
+  # ─────────────────────────────────────────────────────────────
+  # CloudFront Origin Access Control (signs requests to Lambda URL with SigV4)
+  # ─────────────────────────────────────────────────────────────
+  McpCloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub reso-mcp-oac-${Environment}
+        Description: OAC for MCP Lambda Function URL (AWS_IAM)
+        OriginAccessControlOriginType: lambda
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # ─────────────────────────────────────────────────────────────
+  # CloudFront Distribution
+  # ─────────────────────────────────────────────────────────────
+  McpCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub RESO MCP ${Environment}
+        HttpVersion: http2
+        # Optional custom domain
+        Aliases: !If
+          - HasCustomDomain
+          - - !Ref DomainName
+          - !Ref AWS::NoValue
+        ViewerCertificate: !If
+          - HasCustomDomain
+          - AcmCertificateArn: !Ref AcmCertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+        Origins:
+          - Id: McpLambdaOrigin
+            # Extract the domain from the Function URL (strips https:// prefix)
+            DomainName: !Select
+              - 2
+              - !Split
+                - /
+                - !GetAtt McpFunctionUrl.FunctionUrl
+            OriginAccessControlId: !GetAtt McpCloudFrontOAC.Id
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: McpLambdaOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          # CachingDisabled policy (built-in managed policy)
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          # AllViewerExceptHostHeader origin request policy (forwards all headers except Host)
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          Compress: true
+
+  # ─────────────────────────────────────────────────────────────
+  # Permission for CloudFront to invoke the Lambda Function URL
+  # ─────────────────────────────────────────────────────────────
+  McpFunctionUrlCloudfrontPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref McpFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: cloudfront.amazonaws.com
+      SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${McpCloudFrontDistribution}
+
+Outputs:
+
+  McpCloudFrontUrl:
+    Description: >
+      Public HTTPS URL for the MCP via CloudFront.
+      Use this in your React UI. If you set a custom domain, use that instead.
+    Value: !Sub https://${McpCloudFrontDistribution.DomainName}
+    Export:
+      Name: !Sub ${AWS::StackName}-CloudFrontUrl
+
+  McpFunctionUrlDirect:
+    Description: Lambda Function URL (AWS_IAM auth required — not publicly accessible without CloudFront)
+    Value: !GetAtt McpFunctionUrl.FunctionUrl
+    Export:
+      Name: !Sub ${AWS::StackName}-FunctionUrl
+
+  McpFunctionArn:
+    Description: Lambda Function ARN
+    Value: !GetAtt McpFunction.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-FunctionArn
+
+  McpCloudFrontDistributionId:
+    Description: CloudFront Distribution ID (useful for cache invalidation)
+    Value: !Ref McpCloudFrontDistribution
+    Export:
+      Name: !Sub ${AWS::StackName}-CloudFrontDistributionId

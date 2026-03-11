@@ -1,0 +1,11 @@
+{
+  "rawPath": "/mcp/health",
+  "requestContext": {
+    "http": {
+      "method": "GET"
+    }
+  },
+  "headers": {},
+  "queryStringParameters": {},
+  "body": null
+}

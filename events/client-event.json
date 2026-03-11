@@ -1,0 +1,17 @@
+{
+  "rawPath": "/mcp/client",
+  "requestContext": {
+    "http": {
+      "method": "POST"
+    }
+  },
+  "headers": {
+    "authorization": "Bearer YOUR_JWT_TOKEN_HERE",
+    "client-country-code": "MY",
+    "content-type": "application/json"
+  },
+  "queryStringParameters": {
+    "currency": "MYR"
+  },
+  "body": "{\"conversation\":[{\"role\":\"user\",\"content\":\"Show me available products\"}]}"
+}

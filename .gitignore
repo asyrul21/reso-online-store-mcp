@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+.env.json
+.aws-sam/
+samconfig.toml.bak
+*.js.map
