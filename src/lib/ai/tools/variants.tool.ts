@@ -191,7 +191,11 @@ export const getProductVariantByIdPublic: AiAgentTool = {
     strict: false,
     name: 'getProductVariantByIdPublic',
     description:
-      'Fetch a single variant by ID for shoppers. Only returns if not hidden or deleted.',
+      `Fetch a single variant by ID for shoppers. Only returns if not hidden or deleted. 
+      ALWAYS USE THIS TOOL:
+      1. before showcasing products to users.
+      2. Before adding the product variant to the cart
+      3. ONLY show and allow users to add to cart products and variants that are in stock.'`,
     parameters: {
       type: 'object',
       properties: {

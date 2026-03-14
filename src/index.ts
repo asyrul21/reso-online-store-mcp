@@ -2,6 +2,7 @@ import { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { Writable } from 'stream';
 import { ConversationItem } from 'src/lib/ai/types';
 import { handleAgentRequest } from 'src/lib/handler/agentHandler';
+import { CLIENT_URLS } from './config';
 
 // awslambda is injected by the Lambda runtime for streaming support
 declare const awslambda: {
@@ -18,7 +19,7 @@ declare const awslambda: {
 };
 
 const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': CLIENT_URLS.join(','),
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Authorization, Content-Type, client-country-code',
   'Content-Type': 'text/plain; charset=utf-8',

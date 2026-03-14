@@ -77,7 +77,7 @@ import {
   updateTaxRuleByAdmin,
   getTaxAmountPublic,
 } from './taxRule.tool';
-import { getClientCurrency } from './currency.tool';
+import { getClientCurrency, getCountryCodes } from './currency.tool';
 import {
   getUserAddresses,
   createShippingAddress,
@@ -138,6 +138,7 @@ export const adminAgentTools: Record<string, AiAgentTool> = {
   updateTaxRuleByAdmin,
   // Currency
   getClientCurrency,
+  getCountryCodes,
 };
 
 export const clientAgentTools: Record<string, AiAgentTool> = {
@@ -171,6 +172,7 @@ export const clientAgentTools: Record<string, AiAgentTool> = {
   getTaxAmountPublic,
   // Currency
   getClientCurrency,
+  getCountryCodes,
   // Shipping Addresses
   getUserAddresses,
   createShippingAddress,

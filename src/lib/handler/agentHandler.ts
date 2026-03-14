@@ -3,6 +3,7 @@ import { verifyToken, AuthError } from 'src/lib/auth';
 import { ServerClient } from 'src/lib/http/client';
 import { runAgent } from 'src/lib/ai/run';
 import { ConversationItem, StreamError } from 'src/lib/ai/types';
+import { logger } from 'src/lib/logger';
 
 export type AgentHandlerInput = {
   token: string;
@@ -55,7 +56,17 @@ export const handleAgentRequest = async (
 
   const serverClient = new ServerClient({ authToken: token, countryCode, currency });
 
-  const result = await runAgent(conversation, stream, { isAdmin, context, serverClient });
+  // Fetch allowed country codes to inject into the client agent prompt.
+  // Failures are non-fatal — the prompt will fall back to a safe default.
+  let allowedCountryCodes: string[] = [];
+  try {
+    const data = await serverClient.get<{ countryCodes: string[] }>('/api/currency/country-codes');
+    allowedCountryCodes = data.countryCodes ?? [];
+  } catch (err: any) {
+    logger.warn('country_codes_fetch_failed', { error: err.message });
+  }
+
+  const result = await runAgent(conversation, stream, { isAdmin, context, serverClient, allowedCountryCodes });
 
   if (result && (result as StreamError).streamError) {
     stream.write(JSON.stringify(result));

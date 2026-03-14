@@ -27,6 +27,7 @@ export type RunAgentOptions = {
   isAdmin: boolean;
   context?: string;
   serverClient: ServerClient;
+  allowedCountryCodes?: string[];
 };
 
 export const runAgent = async (
@@ -37,7 +38,7 @@ export const runAgent = async (
   try {
     const systemPrompt = options.isAdmin
       ? getAdminAgentPrompt(options.context)
-      : getClientAgentPrompt(options.context);
+      : getClientAgentPrompt(options.allowedCountryCodes ?? [], options.context);
 
     const toolsRegistry: Record<string, AiAgentTool> = options.isAdmin
       ? adminAgentTools
@@ -57,10 +58,16 @@ export const runAgent = async (
       ...(currentConversation as ResponseInput),
     ];
 
+
+    /**
+     * The Agentic Loop
+     */
     let iteration = 0;
     let cumulativeTokens = 0;
-
     while (true) {
+      /**
+       * SHORT CIRCUIT: TODO: to improve and test
+       */
       if (messages.length >= 3) {
         if (simpleDeepEqual(messages[messages.length - 1], messages[messages.length - 2])) {
           break;
@@ -78,8 +85,9 @@ export const runAgent = async (
 
       let result = '';
       let iterationUsage: { input_tokens: number; output_tokens: number; total_tokens: number } | undefined;
-
       resultStream.write('<output>');
+
+      // throw new Error('test error');
 
       const stream = await openai.responses.create({
         model: config.ENV_OPENAI_MODEL,
@@ -93,6 +101,9 @@ export const runAgent = async (
       const toolCallDeltas: Record<number, ResponseFunctionToolCallItem> = {};
 
       for await (const chunk of stream) {
+        /**
+         * Tools Stream
+         */
         if (chunk.type === 'response.output_item.added') {
           if (chunk.item.type === 'function_call') {
             toolCallDeltas[chunk.output_index] = chunk.item as ResponseFunctionToolCallItem;
@@ -109,6 +120,9 @@ export const runAgent = async (
           }
           break;
         } else if (chunk.type === 'response.output_text.delta') {
+          /**
+           * Text Stream
+           */
           const content = chunk.delta || '';
           resultStream.write(content);
           result += content;
@@ -120,6 +134,9 @@ export const runAgent = async (
               output_tokens: usage.output_tokens ?? 0,
               total_tokens: (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
             };
+            /**
+            * Do something with the usage
+            */
           }
         }
       }
@@ -136,6 +153,9 @@ export const runAgent = async (
       }
 
       if (Object.keys(toolCallDeltas).length > 0) {
+        /**
+         * If tool call also includes text response
+         */
         if (result && result !== '') {
           messages.push({ role: 'assistant', content: result });
         }
@@ -145,7 +165,7 @@ export const runAgent = async (
           const toolFn = toolsRegistry[toolName]?.fn;
 
           if (!toolFn) {
-            logger.warn('unknown_tool', { toolName });
+            logger.error('unknown_tool', { toolName });
             continue;
           }
 
@@ -161,26 +181,31 @@ export const runAgent = async (
           messages.push({ ...toolCall });
 
           const toolCallOutput = `${JSON.stringify({ meta: { ...toolCall } })}</output><output>`;
+
           result += toolCallOutput;
           resultStream.write(toolCallOutput);
 
+          /**
+           * Add the tool response
+           */
           const toolResponseInput: ResponseInputItem = {
             type: 'function_call_output',
             call_id: toolCall.call_id,
             output: JSON.stringify(toolResponse),
           };
-
           messages.push(toolResponseInput);
 
+          /**
+           * Add the result
+           */
           const toolResponseOutput = `${JSON.stringify({ meta: { ...toolResponseInput } })}</output>`;
           result += toolResponseOutput;
           resultStream.write(toolResponseOutput);
         }
 
         if (cumulativeTokens >= config.ENV_MAX_TOTAL_TOKENS) {
-          logger.warn('token_budget_exceeded', { cumulativeTokens });
-          resultStream.write('\nToken budget exceeded. Ending conversation.');
-          break;
+          logger.error('token_budget_exceeded', { cumulativeTokens });
+          throw new Error('Token budget exceeded');
         }
 
         continue;
@@ -211,14 +236,16 @@ export const runAgent = async (
       messages.push({ role: 'assistant', content: result });
 
       if (cumulativeTokens >= config.ENV_MAX_TOTAL_TOKENS) {
-        logger.warn('token_budget_exceeded', { cumulativeTokens });
-        resultStream.write('\nToken budget exceeded. Ending conversation.');
-        break;
+        logger.error('token_budget_exceeded', { cumulativeTokens });
+        throw new Error('Token budget exceeded');
       }
-
+      
+      /**
+       * Sleep to prevent rate limiting
+      */
       await sleep(1000);
     }
-
+        
     logger.info('agent_finished', { iteration, cumulativeTokens });
   } catch (error: any) {
     logger.error('agent_error', { message: error.message, stack: error.stack });

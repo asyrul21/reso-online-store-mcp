@@ -12,15 +12,22 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import morgan from 'morgan';
 import * as Stream from 'stream';
-import config from 'src/config';
+import config, { CLIENT_URLS } from 'src/config';
 import { handleAgentRequest } from 'src/lib/handler/agentHandler';
 import { logger } from 'src/lib/logger';
+
+export const CORS_CONFIG = {
+  origin: CLIENT_URLS,
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true,
+};
 
 const app = express();
 
 app.use(cookieParser());
 app.use(express.json());
-app.use(cors({ origin: '*' }));
+logger.info('CORS_CONFIG:', CORS_CONFIG);
+app.use(cors(CORS_CONFIG));
 app.use(morgan('dev'));
 
 app.get('/mcp/health', (_req: Request, res: Response) => {
