@@ -61,7 +61,7 @@ cp .env.example .env
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ONLINE_STORE_SERVER_URL` | Yes | Base URL of the `reso-online-store-server` |
+| `API_SERVER_URL` | Yes | Base URL of the `reso-online-store-server` |
 | `OPENAI_API_KEY` | Yes | Your OpenAI API key |
 | `OPENAI_MODEL` | No | Model to use (default: `gpt-4o`) |
 | `MAX_ITERATIONS` | No | Max agentic loop iterations (default: `20`) |
@@ -185,7 +185,7 @@ Create a `.env.json` file (gitignored):
 ```json
 {
   "McpFunction": {
-    "ONLINE_STORE_SERVER_URL": "http://host.docker.internal:8080",
+    "API_SERVER_URL": "http://host.docker.internal:8080",
     "OPENAI_API_KEY": "sk-...",
     "OPENAI_MODEL": "gpt-4o",
     "MAX_ITERATIONS": "20",
@@ -238,7 +238,7 @@ sam local invoke McpFunction -e events/client-event.json --env-vars .env.json
      --region ap-southeast-1
    ```
 
-3. Update `samconfig.toml` with your actual `OnlineStoreServerUrl` values.
+3. Update `samconfig.toml` with your actual `ApiServerUrl` values.
 
 ### Deploy from local machine (CLI)
 
@@ -419,7 +419,7 @@ The MCP checks `userType.name === 'administrator'` to gate admin access.
 ### Step 3: Update `.env.example` and `.env`
 
 ```bash
-ONLINE_STORE_SERVER_URL=https://your-new-backend.com
+API_SERVER_URL=https://your-new-backend.com
 ```
 
 ### Step 4: Replace the tools
@@ -458,7 +458,7 @@ Edit `src/lib/ai/prompts/agent.ts` to describe your new domain.
 stack_name = "your-new-mcp-dev"
 parameter_overrides = [
   "Environment=dev",
-  "OnlineStoreServerUrl=https://your-new-backend.com",
+  "ApiServerUrl=https://your-new-backend.com",
   ...
 ]
 ```

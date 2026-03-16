@@ -12,7 +12,11 @@ export const getOrdersAdmin: AiAgentTool = {
       properties: {
         page: { type: 'number', description: 'Page number (default 1).' },
         perPage: { type: 'number', description: 'Results per page (default 10).' },
-        status: { type: 'string', description: 'Optional order status filter.' },
+        status: {
+          type: 'string',
+          description: 'Optional order status filter.',
+          enum: ['PLACED', 'PROCESSING', 'SHIPPED', 'COMPLETED'],
+        },
         userId: { type: 'string', description: 'Optional filter to list orders for a specific user ID.' },
       },
     },
@@ -33,7 +37,11 @@ export const getOrdersByUser: AiAgentTool = {
       properties: {
         page: { type: 'number', description: 'Page number (default 1).' },
         perPage: { type: 'number', description: 'Results per page (default 10).' },
-        status: { type: 'string', description: 'Optional order status filter.' },
+        status: {
+          type: 'string',
+          description: 'Optional order status filter.',
+          enum: ['PLACED', 'PROCESSING', 'SHIPPED', 'COMPLETED'],
+        },
       },
     },
   },
@@ -71,7 +79,11 @@ export const updateOrderByAdmin: AiAgentTool = {
       type: 'object',
       properties: {
         orderId: { type: 'string', description: 'Order ID to update.' },
-        status: { type: 'string', description: 'New order status (optional).' },
+        status: {
+          type: 'string',
+          description: 'New order status (optional).',
+          enum: ['PLACED', 'PROCESSING', 'SHIPPED', 'COMPLETED'],
+        },
         remarks: { type: 'string', description: 'Admin remarks (optional).' },
         trackingUrl: { type: 'string', description: 'Shipment tracking URL (optional).' },
       },

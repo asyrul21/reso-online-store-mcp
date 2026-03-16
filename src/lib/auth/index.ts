@@ -16,7 +16,7 @@ export class AuthError extends Error {
 export async function verifyToken(token: string, countryCode: string): Promise<AuthUser> {
   try {
     const response = await axios.get<{ success: boolean; data: AuthUser }>(
-      `${config.ENV_ONLINE_STORE_SERVER_URL}/api/auth/me`,
+      `${config.ENV_API_SERVER_URL}/api/auth/me`,
       {
         headers: {
           Authorization: `Bearer ${token}`,

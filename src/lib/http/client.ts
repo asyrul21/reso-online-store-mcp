@@ -22,7 +22,7 @@ export class ServerClient {
   constructor(private opts: ServerClientOptions) {
     this.currency = opts.currency;
     this.client = axios.create({
-      baseURL: config.ENV_ONLINE_STORE_SERVER_URL,
+      baseURL: config.ENV_API_SERVER_URL,
       timeout: TIMEOUT_MS,
       headers: {
         'Authorization': `Bearer ${opts.authToken}`,

@@ -17,6 +17,7 @@ import {
   updateProductByAdmin,
   getProductsPublic,
   getProductByIdPublic,
+  getProductBuyPagePath,
 } from './products.tool';
 import {
   getProductVariantsAdmin,
@@ -83,6 +84,7 @@ import {
   createShippingAddress,
   updateShippingAddress,
 } from './shippingAddress.tool';
+import { getImageUrlFromKey } from './images.tool';
 import { AiAgentTool } from '../types';
 
 export const adminAgentTools: Record<string, AiAgentTool> = {
@@ -99,6 +101,7 @@ export const adminAgentTools: Record<string, AiAgentTool> = {
   getProductByIdAdmin,
   createProductByAdmin,
   updateProductByAdmin,
+  getProductBuyPagePath,
   // Variants
   getProductVariantsAdmin,
   getProductVariantByIdAdmin,
@@ -139,6 +142,8 @@ export const adminAgentTools: Record<string, AiAgentTool> = {
   // Currency
   getClientCurrency,
   getCountryCodes,
+  // Images
+  getImageUrlFromKey,
 };
 
 export const clientAgentTools: Record<string, AiAgentTool> = {
@@ -149,6 +154,7 @@ export const clientAgentTools: Record<string, AiAgentTool> = {
   // Products
   getProductsPublic,
   getProductByIdPublic,
+  getProductBuyPagePath,
   // Variants
   getProductVariantsPublic,
   getProductVariantByIdPublic, // to check quantity
@@ -177,4 +183,6 @@ export const clientAgentTools: Record<string, AiAgentTool> = {
   getUserAddresses,
   createShippingAddress,
   updateShippingAddress,
+  // Images
+  getImageUrlFromKey,
 };

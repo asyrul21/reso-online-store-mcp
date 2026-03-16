@@ -1,7 +1,33 @@
+node_modules
 node_modules/
-dist/
-.env
-.env.json
+
+# development
+local
+local/
+ai-references/
+
+# deployment
 .aws-sam/
 samconfig.toml.bak
 *.js.map
+
+# production
+/build
+/**/dist
+/frontend/build
+
+.nyc_output/
+.env
+.env.production
+.db.env
+
+# misc
+/**/.vscode
+.DS_Store
+*.pem
+.env
+.env.json
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local

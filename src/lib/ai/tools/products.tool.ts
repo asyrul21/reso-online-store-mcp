@@ -167,3 +167,23 @@ export const getProductByIdPublic: AiAgentTool = {
     return ctx.serverClient.get(`/api/product/${args.productId}`);
   },
 };
+
+export const getProductBuyPagePath: AiAgentTool = {
+  meta: {
+    type: 'function',
+    strict: false,
+    name: 'getProductBuyPagePath',
+    description:
+      'Get the buy page path for a product. Whenever user shows interests in a product, use this tool to get the Navigate URL',
+    parameters: {
+      type: 'object',
+      properties: {
+        productId: { type: 'string', description: 'Product ID to retrieve.' },
+      },
+      required: ['productId'],
+    },
+  },
+  fn: async (args: { productId: string }, ctx: ToolContext) => {
+    return `/products/${args.productId}/buy`;
+  },
+};

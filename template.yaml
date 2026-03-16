@@ -11,7 +11,7 @@ Parameters:
       - prod
     Description: Deployment environment
 
-  OnlineStoreServerUrl:
+  ApiServerUrl:
     Type: String
     Description: Base URL of the online-store-server (e.g. https://api.reso-store.com)
 
@@ -92,7 +92,7 @@ Resources:
       Environment:
         Variables:
           NODE_ENV: !Ref Environment
-          ONLINE_STORE_SERVER_URL: !Ref OnlineStoreServerUrl
+          API_SERVER_URL: !Ref ApiServerUrl
           OPENAI_API_KEY: !Ref OpenAiApiKeyParam
           OPENAI_MODEL: !Ref OpenAiModel
           MAX_ITERATIONS: !Ref MaxIterations

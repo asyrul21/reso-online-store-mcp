@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const config = {
-  ENV_ONLINE_STORE_SERVER_URL: process.env.ONLINE_STORE_SERVER_URL || '',
+  ENV_API_SERVER_URL: process.env.API_SERVER_URL || '',
   ENV_CLIENT_DOMAIN_URLS: process.env.CLIENT_DOMAIN_URLS || '',
   ENV_OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
   ENV_OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4o',
@@ -13,7 +13,7 @@ const config = {
 };
 
 const requiredVars: (keyof typeof config)[] = [
-  'ENV_ONLINE_STORE_SERVER_URL',
+  'ENV_API_SERVER_URL',
   'ENV_OPENAI_API_KEY',
   'ENV_CLIENT_DOMAIN_URLS',
 ];
