@@ -239,6 +239,7 @@ Resources:
     Properties:
       FunctionName: !Ref LambdaFunction
       Action: lambda:InvokeFunctionUrl
+      FunctionUrlAuthType: AWS_IAM
       Principal: cloudfront.amazonaws.com
       SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
 
