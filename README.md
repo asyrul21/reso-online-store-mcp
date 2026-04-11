@@ -220,61 +220,64 @@ sam local invoke McpFunction -e events/client-event.json --env-vars .env.json
 
 ## 4. Deploying to AWS
 
-### Prerequisites
+Infrastructure-as-code lives in `infra/`. The CI/CD pipeline (`reso-infra` kit) deploys via CloudFormation — no SAM CLI needed in the pipeline.
 
-1. AWS CLI configured with credentials that have permissions to create:
-   - Lambda functions
-   - CloudFront distributions
-   - IAM roles
-   - SSM parameters
-   - S3 buckets (SAM uses S3 for deployment artifacts)
-
-2. SSM Parameter Store secret set:
-   ```bash
-   aws ssm put-parameter \
-     --name /reso-mcp/openai-api-key \
-     --value "sk-..." \
-     --type SecureString \
-     --region ap-southeast-1
-   ```
-
-3. Update `samconfig.toml` with your actual `ApiServerUrl` values.
-
-### Deploy from local machine (CLI)
-
-```bash
-# Deploy to dev
-./scripts/deploy.sh dev
-
-# Deploy to prod (prompts for confirmation)
-./scripts/deploy.sh prod
+```
+infra/
+├── cert-stack.yml   — ACM certificate (deployed in us-east-1)
+└── app-stack.yml    — Lambda + CloudFront stack
 ```
 
-Or manually:
+### Step 1 — Set the OpenAI API key in SSM
+
+The OpenAI key is stored as a SecureString in SSM Parameter Store and resolved at CloudFormation deploy time. Set it once:
 
 ```bash
-npm run build
-sam build
-sam deploy --config-env dev
+aws ssm put-parameter \
+  --name /reso-mcp/openai-api-key \
+  --value "sk-..." \
+  --type SecureString \
+  --region ap-southeast-1
 ```
 
-### Deploy via GitHub Actions (CI/CD)
+### Step 2 — Add GitHub Secrets
 
-Push to `main` branch → automatically deploys to prod.
+Go to **Settings → Secrets and variables → Actions** in this repo and add:
 
-To deploy manually to any environment, go to **GitHub → Actions → Deploy MCP Lambda → Run workflow** and choose the target environment.
+**Required**
 
-#### Required GitHub Secrets and Variables
+| Secret | Description |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | `github-deployer` access key (from `reso-infra` bootstrap) |
+| `AWS_SECRET_ACCESS_KEY` | `github-deployer` secret key |
+| `APP_NAME` | `reso-online-store-mcp` |
+| `DOMAIN_NAME` | Custom domain (e.g. `mcp.reso-store.com`) |
+| `HOSTED_ZONE_ID` | Route 53 Hosted Zone ID |
+| `API_SERVER_URL` | Base URL of the online-store-server (e.g. `https://api.reso-store.com`) |
+| `CLIENT_DOMAIN_URLS` | Comma-separated allowed client origins (e.g. `https://reso-store.com`) |
 
-Go to **GitHub → Settings → Environments** and create two environments: `dev` and `prod`.
+**Optional — sensible defaults pre-configured**
 
-For each environment, add:
+| Secret | Default | Description |
+|---|---|---|
+| `AWS_REGION` | `ap-southeast-1` | Target AWS region |
+| `OPENAI_MODEL` | `gpt-4o` | OpenAI model |
+| `MAX_ITERATIONS` | `20` | Max agentic loop iterations |
+| `MAX_TOTAL_TOKENS` | `200000` | Max cumulative tokens per request |
+| `MEMORY_SIZE` | `512` | Lambda memory in MB |
+| `TIMEOUT` | `900` | Lambda timeout in seconds |
 
-| Type | Key | Value |
-|------|-----|-------|
-| Secret | `AWS_ACCESS_KEY_ID` | Your AWS access key |
-| Secret | `AWS_SECRET_ACCESS_KEY` | Your AWS secret key |
-| Variable | `AWS_REGION` | e.g. `ap-southeast-1` |
+> The OpenAI API key does **not** need a GitHub Secret — it is read directly from SSM Parameter Store (`/reso-mcp/openai-api-key`) by CloudFormation at deploy time.
+
+### Step 3 — Deploy
+
+**Push to `main`** — the pipeline runs three jobs: `ci → infra → deploy`.
+
+- `ci` — build TypeScript, prune dev deps, zip artifact
+- `infra` — deploy cert stack to `us-east-1` (idempotent), deploy app stack (idempotent)
+- `deploy` — `aws lambda update-function-code`, wait, invalidate CloudFront
+
+Or trigger manually: **GitHub → Actions → CI/CD Deploy → Run workflow**.
 
 ---
 
@@ -362,26 +365,17 @@ The response is a chunked text stream. Each logical block is wrapped in `<output
 
 ## 7. Enabling Custom Domain
 
-1. Request a certificate in **ACM (us-east-1)** for your domain (e.g. `mcp.reso-store.com`)
-2. After certificate is issued, update `samconfig.toml` prod section:
-   ```toml
-   parameter_overrides = [
-     ...
-     "DomainName=mcp.reso-store.com",
-     "AcmCertificateArn=arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT_ID"
-   ]
-   ```
-3. Deploy: `./scripts/deploy.sh prod`
-4. After deploy, get the CloudFront distribution domain from the stack outputs:
+Custom domain is handled automatically by the CI/CD pipeline via the `DOMAIN_NAME`, `HOSTED_ZONE_ID`, and the cert stack deployed to `us-east-1`.
+
+1. Add `DOMAIN_NAME` (e.g. `mcp.reso-store.com`) and `HOSTED_ZONE_ID` as GitHub Secrets (see Step 2 in Section 4 above).
+2. Push to `main` — the pipeline deploys the ACM cert (DNS-validated via Route 53) and creates the Route 53 alias record pointing to CloudFront automatically.
+3. After deploy, get the live URL from the stack outputs:
    ```bash
    aws cloudformation describe-stacks \
-     --stack-name reso-online-store-mcp-prod \
-     --query "Stacks[0].Outputs" \
-     --output table
+     --stack-name reso-online-store-mcp-stack \
+     --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" \
+     --output text
    ```
-5. In your DNS provider, create a CNAME record:
-   - `mcp.reso-store.com` → `d1234abcd.cloudfront.net`
-   - (Or an `ALIAS` record if using Route 53)
 
 ---
 
@@ -507,4 +501,4 @@ Token usage is logged to **CloudWatch Logs** in structured JSON format:
 }
 ```
 
-Find logs in: **CloudWatch → Log groups → `/aws/lambda/reso-online-store-mcp-prod`**
+Find logs in: **CloudWatch → Log groups → `/aws/lambda/reso-online-store-mcp-prod`** (log group is pre-created by CloudFormation with 30-day retention)

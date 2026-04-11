@@ -1,46 +1,56 @@
-name: Deploy MCP Lambda
+# =============================================================================
+# GitHub Actions CI/CD Workflow — RESO Online Store MCP (Lambda Native TypeScript)
+# Based on reso-infra/github-actions/github-actions-lambda-native-ts.yml
+#
+# Handles: CI (build) → Infra (ACM cert stack → app stack) → Deploy (zip → lambda update-function-code)
+#
+# Infra files in this repo:
+#   infra/cert-stack.yml  — ACM certificate (deployed in us-east-1)
+#   infra/app-stack.yml   — Lambda + CloudFront stack (deployed in ap-southeast-1)
+# =============================================================================
+
+name: CI/CD Deploy
 
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Target environment'
-        required: true
-        default: 'dev'
-        type: choice
-        options:
-          - dev
-          - prod
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [closed]       # fires only on merged PRs
+  workflow_dispatch:      # allows manual trigger from the GitHub Actions UI
+
+# Prevent concurrent deploys on the same ref
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  STACK_NAME: ${{ secrets.APP_NAME }}-stack
+  CERT_STACK_NAME: ${{ secrets.APP_NAME }}-cert-stack
+  AWS_REGION: ${{ secrets.AWS_REGION || 'ap-southeast-1' }}
 
 jobs:
-  deploy:
-    name: Build and Deploy
+  # ============================================
+  # CI: Build and Package
+  # ============================================
+  ci:
+    name: Build & Package
     runs-on: ubuntu-latest
-    # Use GitHub environment matching the target (for environment-scoped secrets)
-    environment: ${{ github.event_name == 'push' && 'prod' || github.event.inputs.environment }}
+    if: >
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Setup AWS SAM CLI
-        uses: aws-actions/setup-sam@v2
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ vars.AWS_REGION }}
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci
@@ -48,23 +58,177 @@ jobs:
       - name: Build TypeScript
         run: npm run build
 
-      - name: SAM Build
-        run: sam build
+      - name: Prune dev dependencies
+        run: npm prune --production
 
-      - name: SAM Deploy
-        run: |
-          ENV=${{ github.event_name == 'push' && 'prod' || github.event.inputs.environment }}
-          sam deploy \
-            --config-env "$ENV" \
-            --no-confirm-changeset \
-            --no-fail-on-empty-changeset
+      - name: Package Lambda artifact
+        # Zip dist/ (compiled JS), node_modules/ (prod-only), and package.json.
+        # Handler: dist/index.handler (matches infra/app-stack.yml)
+        run: zip -r package.zip dist/ node_modules/ package.json
 
-      - name: Print deployed CloudFront URL
+      - name: Upload Lambda artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-package
+          path: package.zip
+          retention-days: 1
+
+  # ============================================
+  # Infra: Create/Update CloudFormation Stacks
+  # Step 1 — cert stack in us-east-1 (idempotent)
+  # Step 2 — app stack in target region (idempotent)
+  # ============================================
+  infra:
+    name: Provision Infrastructure
+    needs: ci
+    runs-on: ubuntu-latest
+    outputs:
+      function_name:   ${{ steps.stack-outputs.outputs.function_name }}
+      distribution_id: ${{ steps.stack-outputs.outputs.distribution_id }}
+    if: >
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy ACM certificate stack (us-east-1)
         run: |
-          ENV=${{ github.event_name == 'push' && 'prod' || github.event.inputs.environment }}
-          STACK_NAME="reso-online-store-mcp-${ENV}"
+          aws cloudformation deploy \
+            --stack-name "$CERT_STACK_NAME" \
+            --template-file infra/cert-stack.yml \
+            --region us-east-1 \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              DomainName="${{ secrets.DOMAIN_NAME }}" \
+              HostedZoneId="${{ secrets.HOSTED_ZONE_ID }}"
+
+      - name: Get certificate ARN
+        id: cert-outputs
+        run: |
+          CERT_ARN=$(aws cloudformation describe-stacks \
+            --stack-name "$CERT_STACK_NAME" \
+            --region us-east-1 \
+            --query "Stacks[0].Outputs[?OutputKey=='CertificateArn'].OutputValue" \
+            --output text)
+          if [[ -z "$CERT_ARN" || "$CERT_ARN" == "None" ]]; then
+            echo "ERROR: CertificateArn output is empty — cert stack may not be in a healthy state"
+            exit 1
+          fi
+          echo "Certificate ARN: $CERT_ARN"
+          echo "certificate_arn=$CERT_ARN" >> $GITHUB_OUTPUT
+
+      - name: Deploy app stack
+        # Idempotent: creates on first run, updates only if template/params changed.
+        # The OpenAI API key is resolved from SSM Parameter Store at deploy time via
+        # AWS::SSM::Parameter::Value<String> in the template — no secret needed here.
+        run: |
+          aws cloudformation deploy \
+            --stack-name "$STACK_NAME" \
+            --template-file infra/app-stack.yml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              AppName="${{ secrets.APP_NAME }}" \
+              Environment="prod" \
+              ApiServerUrl="${{ secrets.API_SERVER_URL }}" \
+              ClientDomainUrls="${{ secrets.CLIENT_DOMAIN_URLS }}" \
+              OpenAiModel="${{ secrets.OPENAI_MODEL || 'gpt-4o' }}" \
+              MaxIterations="${{ secrets.MAX_ITERATIONS || '20' }}" \
+              MaxTotalTokens="${{ secrets.MAX_TOTAL_TOKENS || '200000' }}" \
+              MemorySize="${{ secrets.MEMORY_SIZE || '512' }}" \
+              Timeout="${{ secrets.TIMEOUT || '900' }}" \
+              DomainName="${{ secrets.DOMAIN_NAME }}" \
+              AcmCertificateArn="${{ steps.cert-outputs.outputs.certificate_arn }}" \
+              HostedZoneId="${{ secrets.HOSTED_ZONE_ID }}"
+
+      - name: Get stack outputs
+        id: stack-outputs
+        run: |
+          FUNCTION_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='FunctionName'].OutputValue" \
+            --output text)
+
+          DIST_ID=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" \
+            --output text)
+
+          if [[ -z "$FUNCTION_NAME" || "$FUNCTION_NAME" == "None" ]]; then
+            echo "ERROR: FunctionName output is empty — app stack may not be in a healthy state"
+            exit 1
+          fi
+          if [[ -z "$DIST_ID" || "$DIST_ID" == "None" ]]; then
+            echo "ERROR: CloudFrontDistributionId output is empty — app stack may not be in a healthy state"
+            exit 1
+          fi
+
+          echo "Lambda function: $FUNCTION_NAME"
+          echo "CloudFront distribution: $DIST_ID"
+          echo "function_name=$FUNCTION_NAME"   >> $GITHUB_OUTPUT
+          echo "distribution_id=$DIST_ID"       >> $GITHUB_OUTPUT
+
+  # ============================================
+  # Deploy: Push code zip → Lambda + Invalidate CloudFront
+  # ============================================
+  deploy:
+    name: Deploy Lambda Code
+    needs: infra
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Lambda artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-package
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update Lambda function code
+        run: |
+          FUNCTION_NAME="${{ needs.infra.outputs.function_name }}"
+          echo "Deploying code to Lambda: $FUNCTION_NAME"
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --zip-file fileb://package.zip \
+            --query "FunctionArn" \
+            --output text
+
+      - name: Wait for Lambda update to complete
+        run: |
+          FUNCTION_NAME="${{ needs.infra.outputs.function_name }}"
+          echo "Waiting for Lambda update to complete..."
+          aws lambda wait function-updated \
+            --function-name "$FUNCTION_NAME"
+          echo "Lambda update complete."
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DIST_ID="${{ needs.infra.outputs.distribution_id }}"
+          echo "Invalidating CloudFront distribution: $DIST_ID"
+          aws cloudfront create-invalidation \
+            --distribution-id "$DIST_ID" \
+            --paths "/*"
+
+      - name: Print deployed URL
+        run: |
           echo "Deployed stack: $STACK_NAME"
           aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" \
-            --query "Stacks[0].Outputs[?OutputKey=='McpCloudFrontUrl'].OutputValue" \
+            --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" \
             --output text

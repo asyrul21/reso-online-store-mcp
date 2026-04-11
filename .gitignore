@@ -10,6 +10,8 @@ ai-references/
 .aws-sam/
 samconfig.toml.bak
 *.js.map
+package.zip
+generated
 
 # production
 /build
