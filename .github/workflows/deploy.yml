@@ -218,12 +218,25 @@ jobs:
             --stack-name "$STACK_NAME" \
             --query "Stacks[0].Outputs[?OutputKey=='FunctionName'].OutputValue" \
             --output text)
+
           DIST_ID=$(aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" \
             --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" \
             --output text)
-          echo "function_name=$FUNCTION_NAME" >> $GITHUB_OUTPUT
-          echo "distribution_id=$DIST_ID"     >> $GITHUB_OUTPUT
+
+          if [[ -z "$FUNCTION_NAME" || "$FUNCTION_NAME" == "None" ]]; then
+            echo "ERROR: FunctionName output is empty — app stack may not be in a healthy state"
+            exit 1
+          fi
+          if [[ -z "$DIST_ID" || "$DIST_ID" == "None" ]]; then
+            echo "ERROR: CloudFrontDistributionId output is empty — app stack may not be in a healthy state"
+            exit 1
+          fi
+
+          echo "Lambda function: $FUNCTION_NAME"
+          echo "CloudFront distribution: $DIST_ID"
+          echo "function_name=$FUNCTION_NAME"   >> $GITHUB_OUTPUT
+          echo "distribution_id=$DIST_ID"       >> $GITHUB_OUTPUT
 
       - name: Update Lambda function code
         run: |
