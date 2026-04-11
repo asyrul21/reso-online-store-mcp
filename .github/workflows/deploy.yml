@@ -211,9 +211,23 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Get stack outputs
+        id: stack-outputs
+        run: |
+          FUNCTION_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='FunctionName'].OutputValue" \
+            --output text)
+          DIST_ID=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" \
+            --output text)
+          echo "function_name=$FUNCTION_NAME" >> $GITHUB_OUTPUT
+          echo "distribution_id=$DIST_ID"     >> $GITHUB_OUTPUT
+
       - name: Update Lambda function code
         run: |
-          FUNCTION_NAME="${{ needs.infra.outputs.function_name }}"
+          FUNCTION_NAME="${{ steps.stack-outputs.outputs.function_name }}"
 
           echo "Deploying code to Lambda: $FUNCTION_NAME"
           aws lambda update-function-code \
@@ -224,7 +238,7 @@ jobs:
 
       - name: Wait for Lambda update to complete
         run: |
-          FUNCTION_NAME="${{ needs.infra.outputs.function_name }}"
+          FUNCTION_NAME="${{ steps.stack-outputs.outputs.function_name }}"
           echo "Waiting for Lambda update to complete..."
           aws lambda wait function-updated \
             --function-name "$FUNCTION_NAME"
@@ -232,7 +246,7 @@ jobs:
 
       - name: Invalidate CloudFront cache
         run: |
-          DIST_ID="${{ needs.infra.outputs.distribution_id }}"
+          DIST_ID="${{ steps.stack-outputs.outputs.distribution_id }}"
           echo "Invalidating CloudFront distribution: $DIST_ID"
           aws cloudfront create-invalidation \
             --distribution-id "$DIST_ID" \
