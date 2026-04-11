@@ -208,7 +208,6 @@ Resources:
           - PUT
           - PATCH
           - DELETE
-          - OPTIONS
         AllowHeaders:
           - Authorization
           - Content-Type
