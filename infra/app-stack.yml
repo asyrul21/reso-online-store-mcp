@@ -1,17 +1,18 @@
-# CloudFormation stack for reso-online-store-mcp (Lambda native TypeScript).
-# Based on reso-infra/templates/cf-lambda.yml — customised with MCP-specific parameters.
+# CloudFormation template for Lambda deployments (native handler or Express-on-Lambda).
+# copy this to infra/app-stack.yml in the app repo
+#
+# ACM certificate is managed separately in infra/cert-stack.yml (cf-ui-acm.yml).
+# The CI/CD workflow deploys the cert stack in us-east-1 first, then passes the
+# CertificateArn output to this stack as AcmCertificateArn.
 #
 # Traffic: CloudFront → OAC (SigV4) → Lambda Function URL (AWS_IAM) → Lambda
 # HTTPS is terminated at CloudFront. The Function URL is not publicly accessible.
-#
-# ACM certificate is managed separately in infra/cert-stack.yml.
-# The CI/CD workflow deploys the cert stack in us-east-1 first, then passes the
-# CertificateArn output to this stack as AcmCertificateArn.
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  RESO Online Store MCP — Lambda (RESPONSE_STREAM) + CloudFront stack.
-  Deploys a streaming Lambda function fronted by CloudFront via a Lambda Function URL
-  with AWS_IAM auth and OAC SigV4 signing.
+  Lambda + CloudFront stack. Deploys a Lambda function fronted by CloudFront via
+  a Lambda Function URL with AWS_IAM auth and OAC SigV4 signing.
+  Supports both BUFFERED and RESPONSE_STREAM invoke modes.
+  ACM certificate is provided via AcmCertificateArn (managed by cf-ui-acm.yml cert stack).
 
 # =============================================================================
 # Parameters
@@ -31,34 +32,19 @@ Parameters:
       - prod
     Description: "Deployment environment."
 
-  ApiServerUrl:
+  Runtime:
     Type: String
-    Description: "Base URL of the online-store-server (e.g. https://api.reso-store.com)."
+    Default: nodejs20.x
+    AllowedValues:
+      - nodejs18.x
+      - nodejs20.x
+      - nodejs22.x
+    Description: "Lambda runtime."
 
-  ClientDomainUrls:
+  Handler:
     Type: String
-    Default: "*"
-    Description: "Comma-separated allowed client domain URLs (e.g. https://reso-store.com,https://www.reso-store.com). Use * to allow all."
-
-  OpenAiApiKeyParam:
-    Type: AWS::SSM::Parameter::Value<String>
-    Default: /reso-mcp/openai-api-key
-    Description: "SSM Parameter Store path for the OpenAI API key. The value is resolved at deploy time."
-
-  OpenAiModel:
-    Type: String
-    Default: gpt-4o
-    Description: "OpenAI model to use for the agentic loop."
-
-  MaxIterations:
-    Type: Number
-    Default: 20
-    Description: "Maximum number of agentic loop iterations per request."
-
-  MaxTotalTokens:
-    Type: Number
-    Default: 200000
-    Description: "Maximum cumulative tokens (input + output) per request."
+    Default: dist/index.handler
+    Description: "Lambda handler entry point (e.g. dist/index.handler or dist/lambda.handler)."
 
   MemorySize:
     Type: Number
@@ -74,20 +60,41 @@ Parameters:
     MaxValue: 900
     Description: "Lambda timeout in seconds."
 
+  InvokeMode:
+    Type: String
+    Default: BUFFERED
+    AllowedValues:
+      - BUFFERED
+      - RESPONSE_STREAM
+    Description: >
+      Lambda Function URL invoke mode.
+      Use RESPONSE_STREAM for streaming responses (e.g. agentic AI, SSE).
+      Use BUFFERED for standard request/response (e.g. REST APIs).
+
+  AppEnvJson:
+    Type: String
+    NoEcho: true
+    Default: "{}"
+    Description: >
+      App environment variables as a JSON string, e.g.
+      {"NODE_ENV":"production","API_URL":"https://api.example.com","JWT_SECRET":"xxx"}.
+      Set as the APP_CONFIG environment variable on the Lambda function.
+      Parse in your handler: const config = JSON.parse(process.env.APP_CONFIG || '{}')
+
   DomainName:
     Type: String
     Default: ""
-    Description: "Custom domain (e.g. mcp.reso-store.com). Leave empty to use the CloudFront default *.cloudfront.net domain."
+    Description: "Custom domain (e.g. api.mydomain.com). Leave empty to use the CloudFront default *.cloudfront.net domain."
 
   AcmCertificateArn:
     Type: String
     Default: ""
-    Description: "ARN of the ACM certificate in us-east-1. Required if DomainName is set. Provided by the cert stack (infra/cert-stack.yml) output."
+    Description: "ARN of the ACM certificate in us-east-1. Required if DomainName is set. Provided by the cert stack (cf-ui-acm.yml) output."
 
   HostedZoneId:
     Type: String
     Default: ""
-    Description: "Route53 Hosted Zone ID. Required if DomainName is set."
+    Description: "Route53 Hosted Zone ID. Required if DomainName is set — used for creating the Route53 alias record."
 
 # =============================================================================
 # Conditions
@@ -103,7 +110,9 @@ Resources:
   # --------------------------------------------------
   # CloudWatch Log Group
   # Pre-created so retention is managed by CloudFormation.
-  # Named /aws/lambda/{AppName}-prod — consistent with the kit convention.
+  # Named /aws/lambda/{AppName}-prod to stay under the /aws/lambda/ prefix
+  # (covered by the deployer's existing CloudWatchLogsForLambda permission)
+  # while using the -prod suffix consistent with EC2's /apps/{AppName}-prod.
   # --------------------------------------------------
   LambdaLogGroup:
     Type: AWS::Logs::LogGroup
@@ -117,8 +126,8 @@ Resources:
   # --------------------------------------------------
   # IAM Execution Role
   # Allows Lambda to write logs to the pre-created log group.
-  # SSM read access is not needed — the OpenAI key is resolved at CFN deploy time
-  # via AWS::SSM::Parameter::Value<String> and injected directly as an env var.
+  # Extend this role's inline policies for additional AWS access
+  # (e.g. SSM Parameter Store, S3, SES, DynamoDB).
   # --------------------------------------------------
   LambdaExecutionRole:
     Type: AWS::IAM::Role
@@ -155,8 +164,8 @@ Resources:
     DependsOn: LambdaLogGroup
     Properties:
       FunctionName: !Sub "${AppName}-lambda"
-      Runtime: nodejs20.x
-      Handler: dist/index.handler
+      Runtime: !Ref Runtime
+      Handler: !Ref Handler
       Role: !GetAtt LambdaExecutionRole.Arn
       MemorySize: !Ref MemorySize
       Timeout: !Ref Timeout
@@ -168,12 +177,7 @@ Resources:
       Environment:
         Variables:
           NODE_ENV: !Ref Environment
-          API_SERVER_URL: !Ref ApiServerUrl
-          CLIENT_DOMAIN_URLS: !Ref ClientDomainUrls
-          OPENAI_API_KEY: !Ref OpenAiApiKeyParam
-          OPENAI_MODEL: !Ref OpenAiModel
-          MAX_ITERATIONS: !Sub "${MaxIterations}"
-          MAX_TOTAL_TOKENS: !Sub "${MaxTotalTokens}"
+          APP_CONFIG: !Ref AppEnvJson
       Code:
         ZipFile: |
           exports.handler = async (event) => ({
@@ -187,25 +191,27 @@ Resources:
   # --------------------------------------------------
   # Lambda Function URL
   # AWS_IAM auth — not publicly accessible without CloudFront + OAC.
-  # RESPONSE_STREAM: supports streaming responses (agentic AI, SSE).
+  # InvokeMode is parameterised: BUFFERED (REST) or RESPONSE_STREAM (streaming).
   # --------------------------------------------------
   LambdaFunctionUrl:
     Type: AWS::Lambda::Url
     Properties:
       TargetFunctionArn: !Ref LambdaFunction
       AuthType: AWS_IAM
-      InvokeMode: RESPONSE_STREAM
+      InvokeMode: !Ref InvokeMode
       Cors:
         AllowOrigins:
           - "*"
         AllowMethods:
           - GET
           - POST
+          - PUT
+          - PATCH
+          - DELETE
           - OPTIONS
         AllowHeaders:
           - Authorization
           - Content-Type
-          - client-country-code
         MaxAge: 300
 
   # --------------------------------------------------
@@ -226,6 +232,7 @@ Resources:
   # --------------------------------------------------
   # Lambda Permission — CloudFront invoke
   # Grants CloudFront permission to invoke the Lambda Function URL.
+  # Pinned to this specific distribution ARN for least privilege.
   # --------------------------------------------------
   LambdaFunctionUrlCloudfrontPermission:
     Type: AWS::Lambda::Permission
@@ -239,7 +246,8 @@ Resources:
   # CloudFront Distribution
   # Terminates TLS and forwards all HTTP methods to the Lambda Function URL.
   # Caching is disabled — Lambda handles all request logic.
-  # AllViewerExceptHostHeader origin request policy forwards all headers except Host.
+  # AllViewerExceptHostHeader origin request policy is required with OAC
+  # to forward all headers except Host (which would break SigV4 signing).
   # --------------------------------------------------
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
@@ -252,6 +260,7 @@ Resources:
 
         Origins:
           - Id: LambdaOrigin
+            # Strip https:// from the Function URL to get just the domain
             DomainName: !Select
               - 2
               - !Split ["/", !GetAtt LambdaFunctionUrl.FunctionUrl]
@@ -298,6 +307,7 @@ Resources:
 
   # --------------------------------------------------
   # Route53 Alias Record (conditional — only when DomainName is set)
+  # CloudFront's hosted zone ID is always Z2FDTNDATAQYW2 (AWS-managed constant).
   # --------------------------------------------------
   DnsRecord:
     Type: AWS::Route53::RecordSet
@@ -328,7 +338,7 @@ Outputs:
       Name: !Sub "${AWS::StackName}-FunctionArn"
 
   FunctionUrl:
-    Description: "Lambda Function URL (AWS_IAM auth — not publicly accessible without CloudFront)"
+    Description: "Lambda Function URL (AWS_IAM auth required — not publicly accessible without CloudFront)"
     Value: !GetAtt LambdaFunctionUrl.FunctionUrl
     Export:
       Name: !Sub "${AWS::StackName}-FunctionUrl"
@@ -339,8 +349,8 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}-CloudFrontDistributionId"
 
-  CloudFrontUrl:
-    Description: "CloudFront default HTTPS URL"
+  CloudFrontDomainName:
+    Description: "CloudFront default domain name — use this as your endpoint if no custom domain is configured"
     Value: !Sub "https://${CloudFrontDistribution.DomainName}"
     Export:
       Name: !Sub "${AWS::StackName}-CloudFrontUrl"

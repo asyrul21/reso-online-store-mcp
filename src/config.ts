@@ -1,6 +1,23 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+// Standard RESO pattern: all env vars arrive as a single JSON blob in APP_CONFIG.
+// Parse and merge into process.env so downstream reads work unchanged.
+// dotenv.config() above handles local dev (.env file). On Lambda, APP_CONFIG takes effect.
+const appConfigRaw = process.env.APP_CONFIG;
+if (appConfigRaw) {
+  try {
+    const parsed = JSON.parse(appConfigRaw) as Record<string, unknown>;
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === 'string' && !process.env[key]) {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+    console.error('Failed to parse APP_CONFIG JSON — ensure it is a valid JSON string');
+  }
+}
+
 const config = {
   ENV_API_SERVER_URL: process.env.API_SERVER_URL || '',
   ENV_CLIENT_DOMAIN_URLS: process.env.CLIENT_DOMAIN_URLS || '',
