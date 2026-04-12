@@ -466,15 +466,9 @@ aws ssm put-parameter \
   --type SecureString
 ```
 
-Update `template.yaml` `OpenAiApiKeyParam` default to `/your-project/openai-api-key`.
-
 ### Step 9: Deploy
 
-```bash
-npm install
-npm run build
-./scripts/deploy.sh dev
-```
+Deploy via GitHub Actions. Push to the relevant branch to trigger the workflow.
 
 The framework (Lambda handler, Express local server, run.ts, HTTP client, auth module, CloudFront + OAC, GitHub Actions) stays identical.
 

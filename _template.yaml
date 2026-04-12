@@ -40,6 +40,14 @@ Parameters:
     Default: '*'
     Description: CORS allowed origins for the Lambda Function URL (comma-separated, or *)
 
+  AuthType:
+    Type: String
+    Default: NONE
+    AllowedValues:
+      - NONE
+      - AWS_IAM
+    Description: Lambda Function URL auth type. NONE = publicly accessible. AWS_IAM = requires SigV4 (CloudFront OAC).
+
   # Optional custom domain support
   DomainName:
     Type: String
@@ -53,6 +61,7 @@ Parameters:
 
 Conditions:
   HasCustomDomain: !Not [!Equals [!Ref DomainName, '']]
+  UseIamAuth: !Equals [!Ref AuthType, "AWS_IAM"]
 
 Globals:
   Function:
@@ -71,11 +80,11 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub reso-online-store-mcp-${Environment}
-      Handler: dist/index.handler
+      Handler: index.handler
       CodeUri: .
       Description: MCP agentic Lambda for the RESO Online Store
       FunctionUrlConfig:
-        AuthType: AWS_IAM
+        AuthType: !Ref AuthType
         InvokeMode: RESPONSE_STREAM
         Cors:
           AllowOrigins:
@@ -97,12 +106,24 @@ Resources:
           OPENAI_MODEL: !Ref OpenAiModel
           MAX_ITERATIONS: !Ref MaxIterations
           MAX_TOTAL_TOKENS: !Ref MaxTotalTokens
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: es2020
+        Format: cjs
+        Sourcemap: true
+        EntryPoints:
+          - src/index.ts
+        External:
+          - '@aws-sdk/*'
 
   # ─────────────────────────────────────────────────────────────
   # CloudFront Origin Access Control (signs requests to Lambda URL with SigV4)
   # ─────────────────────────────────────────────────────────────
   McpCloudFrontOAC:
     Type: AWS::CloudFront::OriginAccessControl
+    Condition: UseIamAuth
     Properties:
       OriginAccessControlConfig:
         Name: !Sub reso-mcp-oac-${Environment}
@@ -140,7 +161,7 @@ Resources:
               - !Split
                 - /
                 - !GetAtt McpFunctionUrl.FunctionUrl
-            OriginAccessControlId: !GetAtt McpCloudFrontOAC.Id
+            OriginAccessControlId: !If [UseIamAuth, !GetAtt McpCloudFrontOAC.Id, !Ref AWS::NoValue]
             CustomOriginConfig:
               OriginProtocolPolicy: https-only
               OriginSSLProtocols:
@@ -171,6 +192,7 @@ Resources:
   # ─────────────────────────────────────────────────────────────
   McpFunctionUrlCloudfrontPermission:
     Type: AWS::Lambda::Permission
+    Condition: UseIamAuth
     Properties:
       FunctionName: !Ref McpFunction
       Action: lambda:InvokeFunctionUrl

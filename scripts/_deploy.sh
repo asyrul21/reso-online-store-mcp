@@ -1,3 +1,6 @@
+# ARCHIVED
+# Keeping for reference
+
 #!/bin/bash
 # ────────────────────────────────────────────────────────────────
 # Local CLI deploy script

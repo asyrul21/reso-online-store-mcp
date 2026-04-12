@@ -5,12 +5,14 @@
 # The CI/CD workflow deploys the cert stack in us-east-1 first, then passes the
 # CertificateArn output to this stack as AcmCertificateArn.
 #
-# Traffic: CloudFront → OAC (SigV4) → Lambda Function URL (AWS_IAM) → Lambda
-# HTTPS is terminated at CloudFront. The Function URL is not publicly accessible.
+# Traffic: CloudFront → Lambda Function URL → Lambda
+# AuthType controls whether the Function URL requires SigV4 signing (AWS_IAM) or is public (NONE).
+# When AWS_IAM: CloudFront uses OAC to sign requests; direct Function URL access is blocked.
+# When NONE:   Function URL is publicly accessible; CloudFront still fronts it for TLS/custom domain.
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Lambda + CloudFront stack. Deploys a Lambda function fronted by CloudFront via
-  a Lambda Function URL with AWS_IAM auth and OAC SigV4 signing.
+  a Lambda Function URL. AuthType is parameterised: NONE (public) or AWS_IAM (OAC/SigV4).
   Supports both BUFFERED and RESPONSE_STREAM invoke modes.
   ACM certificate is provided via AcmCertificateArn (managed by cf-ui-acm.yml cert stack).
 
@@ -96,11 +98,24 @@ Parameters:
     Default: ""
     Description: "Route53 Hosted Zone ID. Required if DomainName is set — used for creating the Route53 alias record."
 
+  AuthType:
+    Type: String
+    Default: NONE
+    AllowedValues:
+      - NONE
+      - AWS_IAM
+    Description: >
+      Lambda Function URL auth type.
+      NONE = publicly accessible (no signing required).
+      AWS_IAM = requires SigV4 signing; CloudFront uses OAC to sign requests automatically.
+      Set via GitHub variable AWS_AUTH (true = AWS_IAM, false/omitted = NONE).
+
 # =============================================================================
 # Conditions
 # =============================================================================
 Conditions:
   HasCustomDomain: !Not [!Equals [!Ref DomainName, ""]]
+  UseIamAuth: !Equals [!Ref AuthType, "AWS_IAM"]
 
 # =============================================================================
 # Resources
@@ -190,14 +205,14 @@ Resources:
 
   # --------------------------------------------------
   # Lambda Function URL
-  # AWS_IAM auth — not publicly accessible without CloudFront + OAC.
+  # AuthType is parameterised: NONE (public) or AWS_IAM (CloudFront OAC + SigV4).
   # InvokeMode is parameterised: BUFFERED (REST) or RESPONSE_STREAM (streaming).
   # --------------------------------------------------
   LambdaFunctionUrl:
     Type: AWS::Lambda::Url
     Properties:
       TargetFunctionArn: !Ref LambdaFunction
-      AuthType: AWS_IAM
+      AuthType: !Ref AuthType
       InvokeMode: !Ref InvokeMode
       Cors:
         AllowOrigins:
@@ -216,10 +231,11 @@ Resources:
   # --------------------------------------------------
   # CloudFront Origin Access Control (OAC)
   # Signs requests from CloudFront to the Lambda Function URL using SigV4.
-  # Required because the Function URL uses AWS_IAM auth.
+  # Only created when AuthType=AWS_IAM.
   # --------------------------------------------------
   CloudFrontOAC:
     Type: AWS::CloudFront::OriginAccessControl
+    Condition: UseIamAuth
     Properties:
       OriginAccessControlConfig:
         Name: !Sub "${AppName}-lambda-oac"
@@ -231,10 +247,12 @@ Resources:
   # --------------------------------------------------
   # Lambda Permission — CloudFront invoke
   # Grants CloudFront permission to invoke the Lambda Function URL.
+  # Only needed when AuthType=AWS_IAM (NONE URLs are publicly accessible).
   # Pinned to this specific distribution ARN for least privilege.
   # --------------------------------------------------
   LambdaFunctionUrlCloudfrontPermission:
     Type: AWS::Lambda::Permission
+    Condition: UseIamAuth
     Properties:
       FunctionName: !Ref LambdaFunction
       Action: lambda:InvokeFunctionUrl
@@ -264,7 +282,7 @@ Resources:
             DomainName: !Select
               - 2
               - !Split ["/", !GetAtt LambdaFunctionUrl.FunctionUrl]
-            OriginAccessControlId: !GetAtt CloudFrontOAC.Id
+            OriginAccessControlId: !If [UseIamAuth, !GetAtt CloudFrontOAC.Id, !Ref AWS::NoValue]
             CustomOriginConfig:
               OriginProtocolPolicy: https-only
               OriginSSLProtocols:
@@ -338,7 +356,7 @@ Outputs:
       Name: !Sub "${AWS::StackName}-FunctionArn"
 
   FunctionUrl:
-    Description: "Lambda Function URL (AWS_IAM auth required — not publicly accessible without CloudFront)"
+    Description: "Lambda Function URL (auth type depends on AuthType parameter — use CloudFront URL for public access)"
     Value: !GetAtt LambdaFunctionUrl.FunctionUrl
     Export:
       Name: !Sub "${AWS::StackName}-FunctionUrl"
