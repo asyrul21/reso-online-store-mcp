@@ -160,6 +160,7 @@ jobs:
               DomainName="${{ secrets.DOMAIN_NAME }}" \
               AcmCertificateArn="${{ steps.cert-outputs.outputs.certificate_arn }}" \
               HostedZoneId="${{ secrets.HOSTED_ZONE_ID }}" \
+              OriginVerifySecret="${{ secrets.ORIGIN_VERIFY_SECRET }}" \
               "AppEnvJson=$APP_ENV_JSON"
 
       - name: Get stack outputs

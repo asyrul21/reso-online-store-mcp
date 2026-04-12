@@ -2,7 +2,7 @@ import { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { Writable } from 'stream';
 import { ConversationItem } from 'src/lib/ai/types';
 import { handleAgentRequest } from 'src/lib/handler/agentHandler';
-import { CLIENT_URLS } from './config';
+import config, { CLIENT_URLS } from './config';
 
 // awslambda is injected by the Lambda runtime for streaming support
 declare const awslambda: {
@@ -38,6 +38,16 @@ export const handler = awslambda.streamifyResponse(
     });
 
     if (method === 'OPTIONS') {
+      httpStream.end();
+      return;
+    }
+
+    // Verify the request came through CloudFront by checking the secret header.
+    // CloudFront injects X-Origin-Verify on every origin request; direct calls
+    // to the Lambda Function URL will not have it.
+    const originSecret = config.ENV_ORIGIN_VERIFY_SECRET;
+    if (originSecret && event.headers?.['x-origin-verify'] !== originSecret) {
+      httpStream.write(JSON.stringify({ message: 'Forbidden', key: 'FORBIDDEN' }));
       httpStream.end();
       return;
     }

@@ -5,13 +5,16 @@
 # The CI/CD workflow deploys the cert stack in us-east-1 first, then passes the
 # CertificateArn output to this stack as AcmCertificateArn.
 #
-# Traffic: CloudFront (public) → OAC (SigV4) → Lambda Function URL (AWS_IAM) → Lambda
-# The Function URL always uses AWS_IAM auth — only CloudFront can invoke it via OAC.
-# Direct Function URL access is blocked; all public traffic goes through CloudFront.
+# Traffic: CloudFront (public) → Lambda Function URL (NONE) → Lambda
+# Security: CloudFront injects a secret X-Origin-Verify header on every origin
+# request. Lambda validates this header and rejects requests without it, ensuring
+# only CloudFront can invoke the Function URL.
+# Note: OAC with AWS_IAM is NOT used because CloudFront OAC cannot properly sign
+# POST request bodies, causing SigV4 signature mismatches on POST/PUT requests.
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Lambda + CloudFront stack. Deploys a Lambda function fronted by CloudFront via
-  a Lambda Function URL with AWS_IAM auth (OAC/SigV4).
+  a Lambda Function URL (AuthType NONE, secured by a custom origin-verify header).
   Supports both BUFFERED and RESPONSE_STREAM invoke modes.
   ACM certificate is provided via AcmCertificateArn (managed by cf-ui-acm.yml cert stack).
 
@@ -97,6 +100,14 @@ Parameters:
     Default: ""
     Description: "Route53 Hosted Zone ID. Required if DomainName is set — used for creating the Route53 alias record."
 
+  OriginVerifySecret:
+    Type: String
+    NoEcho: true
+    Description: >
+      Shared secret injected by CloudFront as X-Origin-Verify header.
+      Lambda validates this to ensure requests only come through CloudFront.
+      Set via GitHub secret ORIGIN_VERIFY_SECRET.
+
 # =============================================================================
 # Conditions
 # =============================================================================
@@ -179,6 +190,7 @@ Resources:
         Variables:
           NODE_ENV: !Ref Environment
           APP_CONFIG: !Ref AppEnvJson
+          ORIGIN_VERIFY_SECRET: !Ref OriginVerifySecret
       Code:
         ZipFile: |
           exports.handler = async (event) => ({
@@ -191,13 +203,14 @@ Resources:
 
   # --------------------------------------------------
   # Lambda Function URL
-  # Always uses AWS_IAM — only CloudFront (via OAC) can invoke it.
+  # AuthType NONE — publicly accessible at the URL level.
+  # Access is restricted by the X-Origin-Verify secret header validated in Lambda.
   # --------------------------------------------------
   LambdaFunctionUrl:
     Type: AWS::Lambda::Url
     Properties:
       TargetFunctionArn: !Ref LambdaFunction
-      AuthType: AWS_IAM
+      AuthType: NONE
       InvokeMode: !Ref InvokeMode
       Cors:
         AllowOrigins:
@@ -214,53 +227,24 @@ Resources:
         MaxAge: 300
 
   # --------------------------------------------------
-  # CloudFront Origin Access Control (OAC)
-  # Signs requests from CloudFront to the Lambda Function URL using SigV4.
+  # Lambda Permission — Public access
+  # Required for AuthType NONE — grants public invoke permission.
+  # Without this, Lambda returns 403 even with AuthType NONE.
   # --------------------------------------------------
-  CloudFrontOAC:
-    Type: AWS::CloudFront::OriginAccessControl
-    Properties:
-      OriginAccessControlConfig:
-        Name: !Sub "${AppName}-lambda-oac"
-        Description: !Sub "OAC for ${AppName} Lambda Function URL (AWS_IAM)"
-        OriginAccessControlOriginType: lambda
-        SigningBehavior: always
-        SigningProtocol: sigv4
-
-  # --------------------------------------------------
-  # Lambda Permission — CloudFront invoke
-  # Grants CloudFront permission to invoke the Lambda Function URL.
-  # Pinned to this specific distribution ARN for least privilege.
-  # --------------------------------------------------
-  LambdaFunctionUrlCloudfrontPermission:
+  LambdaFunctionUrlPublicPermission:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref LambdaFunction
       Action: lambda:InvokeFunctionUrl
-      FunctionUrlAuthType: AWS_IAM
-      Principal: cloudfront.amazonaws.com
-      SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
-
-  # --------------------------------------------------
-  # Lambda Permission — CloudFront invoke (lambda:InvokeFunction)
-  # Since October 2025, new Function URLs require BOTH lambda:InvokeFunctionUrl
-  # AND lambda:InvokeFunction permissions for CloudFront OAC to work.
-  # See: https://github.com/aws-samples/remote-swe-agents/issues/361
-  # --------------------------------------------------
-  LambdaFunctionCloudfrontPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref LambdaFunction
-      Action: lambda:InvokeFunction
-      Principal: cloudfront.amazonaws.com
-      SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
+      FunctionUrlAuthType: NONE
+      Principal: "*"
 
   # --------------------------------------------------
   # CloudFront Distribution
   # Terminates TLS and forwards all HTTP methods to the Lambda Function URL.
+  # Injects X-Origin-Verify secret header so Lambda can verify the request
+  # came through CloudFront.
   # Caching is disabled — Lambda handles all request logic.
-  # AllViewerExceptHostHeader origin request policy is required with OAC
-  # to forward all headers except Host (which would break SigV4 signing).
   # --------------------------------------------------
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
@@ -277,11 +261,13 @@ Resources:
             DomainName: !Select
               - 2
               - !Split ["/", !GetAtt LambdaFunctionUrl.FunctionUrl]
-            OriginAccessControlId: !GetAtt CloudFrontOAC.Id
             CustomOriginConfig:
               OriginProtocolPolicy: https-only
               OriginSSLProtocols:
                 - TLSv1.2
+            OriginCustomHeaders:
+              - HeaderName: X-Origin-Verify
+                HeaderValue: !Ref OriginVerifySecret
 
         DefaultCacheBehavior:
           TargetOriginId: LambdaOrigin
@@ -351,7 +337,7 @@ Outputs:
       Name: !Sub "${AWS::StackName}-FunctionArn"
 
   FunctionUrl:
-    Description: "Lambda Function URL (AWS_IAM auth — use CloudFront URL for public access)"
+    Description: "Lambda Function URL (AuthType NONE — secured by X-Origin-Verify header, use CloudFront URL for access)"
     Value: !GetAtt LambdaFunctionUrl.FunctionUrl
     Export:
       Name: !Sub "${AWS::StackName}-FunctionUrl"

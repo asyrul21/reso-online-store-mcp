@@ -27,6 +27,7 @@ const config = {
   ENV_MAX_TOTAL_TOKENS: parseInt(process.env.MAX_TOTAL_TOKENS || '200000', 10),
   ENV_PORT: parseInt(process.env.PORT || '3001', 10),
   ENV_NODE_ENV: process.env.NODE_ENV || 'development',
+  ENV_ORIGIN_VERIFY_SECRET: process.env.ORIGIN_VERIFY_SECRET || '',
 };
 
 const requiredVars: (keyof typeof config)[] = [
