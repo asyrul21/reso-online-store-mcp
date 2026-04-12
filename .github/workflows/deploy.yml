@@ -61,21 +61,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
+      - name: Type check
         run: npm run build
+
+      - name: Bundle
+        # esbuild resolves all src/* path aliases and bundles everything into a single
+        # dist/index.js — no node_modules needed in the Lambda zip.
+        run: node_modules/.bin/esbuild src/index.ts --bundle --platform=node --target=es2020 --format=cjs --outfile=dist/index.js --external:@aws-sdk/*
 
       - name: Run tests
         run: npm test
 
-      - name: Prune dev dependencies
-        # Remove devDependencies before packaging so the zip stays small.
-        # node_modules is reinstalled cleanly from the lockfile — only prod deps remain.
-        run: npm prune --production
-
       - name: Package Lambda artifact
-        # Zip dist/ (compiled JS), node_modules/ (prod-only), and package.json.
-        # The handler path in cf-lambda.yml (dist/index.handler) must match the tsc outDir.
-        run: zip -r package.zip dist/ node_modules/ package.json
+        # Only dist/index.js is needed — esbuild inlines all dependencies.
+        run: zip -r package.zip dist/index.js
 
       - name: Upload Lambda artifact
         uses: actions/upload-artifact@v4
