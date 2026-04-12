@@ -1,5 +1,4 @@
 import pino from 'pino';
-import config from 'src/config';
 
 /**
  * Singleton pino logger.
@@ -14,16 +13,7 @@ class Logger {
   private logger: pino.Logger;
 
   private constructor() {
-    if (config.ENV_NODE_ENV !== 'production') {
-      this.logger = pino({
-        transport: {
-          target: 'pino-pretty',
-          options: { colorize: true },
-        },
-      });
-    } else {
-      this.logger = pino({ level: 'info' });
-    }
+    this.logger = pino({ level: 'info' });
   }
 
   public static getInstance(): Logger {
