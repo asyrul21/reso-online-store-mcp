@@ -155,7 +155,6 @@ jobs:
               Environment="prod" \
               Handler="dist/index.handler" \
               InvokeMode="${{ secrets.INVOKE_MODE || 'RESPONSE_STREAM' }}" \
-              AuthType="${{ vars.AWS_AUTH == 'true' && 'AWS_IAM' || 'NONE' }}" \
               MemorySize="${{ secrets.MEMORY_SIZE || '512' }}" \
               Timeout="${{ secrets.TIMEOUT || '900' }}" \
               DomainName="${{ secrets.DOMAIN_NAME }}" \
