@@ -242,6 +242,20 @@ Resources:
       SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
 
   # --------------------------------------------------
+  # Lambda Permission — CloudFront invoke (lambda:InvokeFunction)
+  # Since October 2025, new Function URLs require BOTH lambda:InvokeFunctionUrl
+  # AND lambda:InvokeFunction permissions for CloudFront OAC to work.
+  # See: https://github.com/aws-samples/remote-swe-agents/issues/361
+  # --------------------------------------------------
+  LambdaFunctionCloudfrontPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: cloudfront.amazonaws.com
+      SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
+
+  # --------------------------------------------------
   # CloudFront Distribution
   # Terminates TLS and forwards all HTTP methods to the Lambda Function URL.
   # Caching is disabled — Lambda handles all request logic.
