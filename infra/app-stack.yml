@@ -227,7 +227,7 @@ Resources:
         MaxAge: 300
 
   # --------------------------------------------------
-  # Lambda Permission — Public access
+  # Lambda Permission — Public access (InvokeFunctionUrl)
   # Required for AuthType NONE — grants public invoke permission.
   # Without this, Lambda returns 403 even with AuthType NONE.
   # --------------------------------------------------
@@ -237,6 +237,19 @@ Resources:
       FunctionName: !Ref LambdaFunction
       Action: lambda:InvokeFunctionUrl
       FunctionUrlAuthType: NONE
+      Principal: "*"
+
+  # --------------------------------------------------
+  # Lambda Permission — Public access (InvokeFunction)
+  # Since October 2025, Function URLs require BOTH lambda:InvokeFunctionUrl
+  # AND lambda:InvokeFunction permissions. Without this second permission,
+  # Lambda returns 403 even with the InvokeFunctionUrl permission above.
+  # --------------------------------------------------
+  LambdaFunctionPublicPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
       Principal: "*"
 
   # --------------------------------------------------
