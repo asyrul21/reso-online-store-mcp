@@ -256,7 +256,10 @@ Resources:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
         TimeoutInMillis: 29000
-        ContentHandling: CONVERT_TO_TEXT
+        # ResponseTransferMode must be STREAM when using response-streaming-invocations URI.
+        # Omitted (AWS::NoValue) for BUFFERED — setting it to BUFFERED with the streaming URI
+        # causes a 400: "Cannot use ResponseTransferMode BUFFERED for InvokeWithResponseStream".
+        ResponseTransferMode: !If [IsStreaming, STREAM, !Ref AWS::NoValue]
         Uri: !If
           - IsStreaming
           - !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2021-11-15/functions/${LambdaFunction.Arn}/response-streaming-invocations"
@@ -277,7 +280,7 @@ Resources:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
         TimeoutInMillis: 29000
-        ContentHandling: CONVERT_TO_TEXT
+        ResponseTransferMode: !If [IsStreaming, STREAM, !Ref AWS::NoValue]
         Uri: !If
           - IsStreaming
           - !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2021-11-15/functions/${LambdaFunction.Arn}/response-streaming-invocations"
