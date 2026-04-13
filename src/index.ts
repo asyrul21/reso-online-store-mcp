@@ -48,15 +48,16 @@ export const handler = awslambda.streamifyResponse(
       'GET'
     ).toUpperCase();
 
-    logger.info('eceived request:', {
-      path, method, event,
-    });
-
     const requestOrigin = event.headers?.['origin'] || event.headers?.['Origin'];
+    const corsHeaders = getCorsHeaders(requestOrigin);
+
+    logger.info('Received request:', {
+      path, method, event, corsHeaders,
+    });
 
     const httpStream = awslambda.HttpResponseStream.from(responseStream, {
       statusCode: 200,
-      headers: getCorsHeaders(requestOrigin),
+      headers: corsHeaders,
     });
 
     if (method === 'OPTIONS') {
