@@ -1,4 +1,4 @@
-import { APIGatewayProxyEventV2 } from 'aws-lambda';
+import { APIGatewayProxyEvent, APIGatewayProxyEventV2 } from 'aws-lambda';
 import { Writable } from 'stream';
 import { ConversationItem } from 'src/lib/ai/types';
 import { handleAgentRequest } from 'src/lib/handler/agentHandler';
@@ -28,9 +28,14 @@ const CORS_HEADERS = {
 };
 
 export const handler = awslambda.streamifyResponse(
-  async (event: APIGatewayProxyEventV2, responseStream: Writable, _context: any) => {
-    const path = event.rawPath || '/';
-    const method = event.requestContext?.http?.method?.toUpperCase() || 'GET';
+  async (event: APIGatewayProxyEventV2 | APIGatewayProxyEvent, responseStream: Writable, _context: any) => {
+    // Support both REST API (v1: event.path, event.httpMethod) and HTTP API (v2: event.rawPath, event.requestContext.http.method)
+    const path = (event as APIGatewayProxyEventV2).rawPath || (event as APIGatewayProxyEvent).path || '/';
+    const method = (
+      (event as APIGatewayProxyEventV2).requestContext?.http?.method ||
+      (event as APIGatewayProxyEvent).httpMethod ||
+      'GET'
+    ).toUpperCase();
 
     const httpStream = awslambda.HttpResponseStream.from(responseStream, {
       statusCode: 200,
@@ -38,16 +43,6 @@ export const handler = awslambda.streamifyResponse(
     });
 
     if (method === 'OPTIONS') {
-      httpStream.end();
-      return;
-    }
-
-    // Verify the request came through CloudFront by checking the secret header.
-    // CloudFront injects X-Origin-Verify on every origin request; direct calls
-    // to the Lambda Function URL will not have it.
-    const originSecret = config.ENV_ORIGIN_VERIFY_SECRET;
-    if (originSecret && event.headers?.['x-origin-verify'] !== originSecret) {
-      httpStream.write(JSON.stringify({ message: 'Forbidden', key: 'FORBIDDEN' }));
       httpStream.end();
       return;
     }
