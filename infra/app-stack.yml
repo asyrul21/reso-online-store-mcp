@@ -1,9 +1,8 @@
 # CloudFormation template for Lambda deployments (native handler or Express-on-Lambda).
 # copy this to infra/app-stack.yml in the app repo
 #
-# ACM certificate is managed separately in infra/cert-stack.yml (cf-ui-acm.yml).
-# The CI/CD workflow deploys the cert stack in the SAME region as this stack first,
-# then passes the CertificateArn output to this stack as AcmCertificateArn.
+# ACM certificate is provisioned directly in this stack (same region as the API Gateway).
+# No separate cert stack is needed — unlike CloudFront stacks which require us-east-1.
 #
 # Traffic: Route 53 → API Gateway (Regional) → Lambda
 # API Gateway handles TLS, custom domain, multi-endpoint routing, and auth.
@@ -16,7 +15,7 @@ Description: >
   Lambda + API Gateway REST API stack. Deploys a Lambda function fronted by a Regional
   API Gateway REST API with proxy integration. Supports response streaming (RESPONSE_STREAM)
   and custom domain via Route 53. AuthType is parameterised: NONE (public) or AWS_IAM (SigV4).
-  ACM certificate must be in the same region as this stack (provided by cert stack output).
+  ACM certificate is provisioned in the same region as this stack (no separate cert stack needed).
 
 # =============================================================================
 # Parameters
@@ -92,17 +91,10 @@ Parameters:
     Default: ""
     Description: "Custom domain (e.g. api.mydomain.com). Leave empty to use the API Gateway default execute-api URL."
 
-  AcmCertificateArn:
-    Type: String
-    Default: ""
-    Description: >
-      ARN of the ACM certificate in the SAME region as this stack (Regional API Gateway custom domain).
-      Provided by the cert stack (cf-ui-acm.yml) output. Required if DomainName is set.
-
   HostedZoneId:
     Type: String
     Default: ""
-    Description: "Route53 Hosted Zone ID. Required if DomainName is set — used for creating the Route53 alias record."
+    Description: "Route53 Hosted Zone ID. Required if DomainName is set — used for DNS cert validation and the Route53 alias record."
 
   AuthType:
     Type: String
@@ -330,8 +322,27 @@ Resources:
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/*/*"
 
   # --------------------------------------------------
+  # ACM Certificate (conditional — only when DomainName is set)
+  # Provisioned in the same region as this stack — valid for Regional API Gateway.
+  # DNS-validated automatically via the provided HostedZoneId.
+  # No separate cert stack needed (unlike CloudFront which requires us-east-1).
+  # --------------------------------------------------
+  AcmCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasCustomDomain
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: app
+          Value: !Ref AppName
+
+  # --------------------------------------------------
   # API Gateway Custom Domain Name (conditional — only when DomainName is set)
-  # RegionalCertificateArn: cert must be in the SAME region as this stack (not us-east-1).
+  # RegionalCertificateArn references the cert provisioned above (same region).
   # EndpointConfiguration: REGIONAL — matches the REST API endpoint type.
   # --------------------------------------------------
   ApiCustomDomain:
@@ -339,7 +350,7 @@ Resources:
     Condition: HasCustomDomain
     Properties:
       DomainName: !Ref DomainName
-      RegionalCertificateArn: !Ref AcmCertificateArn
+      RegionalCertificateArn: !Ref AcmCertificate
       EndpointConfiguration:
         Types:
           - REGIONAL

@@ -41,7 +41,6 @@ concurrency:
 env:
   NODE_VERSION: "22"
   STACK_NAME: ${{ secrets.APP_NAME }}-stack
-  CERT_STACK_NAME: ${{ secrets.APP_NAME }}-cert-stack
   AWS_REGION: ${{ secrets.AWS_REGION || 'ap-southeast-1' }}
 
 jobs:
@@ -93,12 +92,9 @@ jobs:
           retention-days: 1
 
   # ============================================
-  # Infra: Create/Update CloudFormation Stacks
-  # Step 1 — cert stack in app region (idempotent)
-  # Step 2 — app stack in target region (idempotent)
-  #
-  # IMPORTANT: cert stack deploys to AWS_REGION (not us-east-1).
-  # Regional API Gateway custom domains require the ACM cert in the same region.
+  # Infra: Create/Update CloudFormation Stack
+  # Single stack — ACM cert is provisioned inline (same region as API Gateway).
+  # No separate cert stack needed.
   # ============================================
   infra:
     name: Provision Infrastructure
@@ -124,36 +120,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy ACM certificate stack (regional)
-        # Deploys in the app region — required for Regional API Gateway custom domains.
-        run: |
-          aws cloudformation deploy \
-            --stack-name "$CERT_STACK_NAME" \
-            --template-file infra/cert-stack.yml \
-            --region "$AWS_REGION" \
-            --no-fail-on-empty-changeset \
-            --parameter-overrides \
-              DomainName="${{ secrets.DOMAIN_NAME }}" \
-              HostedZoneId="${{ secrets.HOSTED_ZONE_ID }}"
-
-      - name: Get certificate ARN
-        id: cert-outputs
-        run: |
-          CERT_ARN=$(aws cloudformation describe-stacks \
-            --stack-name "$CERT_STACK_NAME" \
-            --region "$AWS_REGION" \
-            --query "Stacks[0].Outputs[?OutputKey=='CertificateArn'].OutputValue" \
-            --output text)
-          if [[ -z "$CERT_ARN" || "$CERT_ARN" == "None" ]]; then
-            echo "ERROR: CertificateArn output is empty — cert stack may not be in a healthy state"
-            exit 1
-          fi
-          echo "Certificate ARN: $CERT_ARN"
-          echo "certificate_arn=$CERT_ARN" >> $GITHUB_OUTPUT
-
       - name: Deploy app stack
         # Idempotent: creates on first run, updates only if template/params changed,
         # exits cleanly when nothing has changed.
+        # ACM cert is provisioned inside this stack — no separate cert stack needed.
         # AppEnvJson is passed via env var to safely handle JSON strings and special
         # characters without shell escaping issues.
         env:
@@ -173,7 +143,6 @@ jobs:
               MemorySize="${{ secrets.MEMORY_SIZE || '512' }}" \
               Timeout="${{ secrets.TIMEOUT || '900' }}" \
               DomainName="${{ secrets.DOMAIN_NAME }}" \
-              AcmCertificateArn="${{ steps.cert-outputs.outputs.certificate_arn }}" \
               HostedZoneId="${{ secrets.HOSTED_ZONE_ID }}" \
               "AppEnvJson=$APP_ENV_JSON"
 
