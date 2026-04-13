@@ -37,11 +37,12 @@ Parameters:
 
   Runtime:
     Type: String
-    Default: nodejs20.x
+    Default: nodejs24.x
     AllowedValues:
       - nodejs18.x
       - nodejs20.x
       - nodejs22.x
+      - nodejs24.x
     Description: "Lambda runtime."
 
   Handler:

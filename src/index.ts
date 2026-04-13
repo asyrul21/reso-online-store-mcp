@@ -47,8 +47,16 @@ export const handler = awslambda.streamifyResponse(
       return;
     }
 
-    if (path === '/mcp/health' || path === '/mcp/health/') {
-      httpStream.write(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
+    if (path === '/' || path === '/mcp/health' || path === '/mcp/health/') {
+      let payload: unknown = 'Not provided';
+      if (event.body) {
+        try {
+          payload = JSON.parse(event.body);
+        } catch {
+          payload = event.body;
+        }
+      }
+      httpStream.write(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString(), payload }));
       httpStream.end();
       return;
     }
