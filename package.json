@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only --require tsconfig-paths/register src/local.ts",
-    "build": "tsc --noEmit",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.js --external:@aws-sdk/*",
+    "type-check": "tsc --noEmit",
     "start": "node dist/index.js",
     "lint": "eslint src --ext .ts",
     "test": "vitest run"
