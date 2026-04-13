@@ -3,6 +3,7 @@ import { Writable } from 'stream';
 import { ConversationItem } from 'src/lib/ai/types';
 import { handleAgentRequest } from 'src/lib/handler/agentHandler';
 import config, { CLIENT_URLS } from './config';
+import { logger } from './lib/logger';
 
 // awslambda is injected by the Lambda runtime for streaming support
 declare const awslambda: {
@@ -46,6 +47,10 @@ export const handler = awslambda.streamifyResponse(
       (event as APIGatewayProxyEvent).httpMethod ||
       'GET'
     ).toUpperCase();
+
+    logger.info('eceived request:', {
+      path, method, event,
+    });
 
     const requestOrigin = event.headers?.['origin'] || event.headers?.['Origin'];
 
