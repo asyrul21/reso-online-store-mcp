@@ -2,21 +2,21 @@
 # copy this to infra/app-stack.yml in the app repo
 #
 # ACM certificate is managed separately in infra/cert-stack.yml (cf-ui-acm.yml).
-# The CI/CD workflow deploys the cert stack in us-east-1 first, then passes the
-# CertificateArn output to this stack as AcmCertificateArn.
+# The CI/CD workflow deploys the cert stack in the SAME region as this stack first,
+# then passes the CertificateArn output to this stack as AcmCertificateArn.
 #
-# Traffic: CloudFront (public) → Lambda Function URL (NONE) → Lambda
-# Security: CloudFront injects a secret X-Origin-Verify header on every origin
-# request. Lambda validates this header and rejects requests without it, ensuring
-# only CloudFront can invoke the Function URL.
-# Note: OAC with AWS_IAM is NOT used because CloudFront OAC cannot properly sign
-# POST request bodies, causing SigV4 signature mismatches on POST/PUT requests.
+# Traffic: Route 53 → API Gateway (Regional) → Lambda
+# API Gateway handles TLS, custom domain, multi-endpoint routing, and auth.
+# AuthType controls whether methods require SigV4 signing (AWS_IAM) or are public (NONE).
+# When AWS_IAM: clients sign requests with SigV4 against execute-api service.
+#              Works natively with Postman (AWS Signature auth) and Console Test button.
+# When NONE:   API is publicly accessible — handler is responsible for any auth.
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Lambda + CloudFront stack. Deploys a Lambda function fronted by CloudFront via
-  a Lambda Function URL (AuthType NONE, secured by a custom origin-verify header).
-  Supports both BUFFERED and RESPONSE_STREAM invoke modes.
-  ACM certificate is provided via AcmCertificateArn (managed by cf-ui-acm.yml cert stack).
+  Lambda + API Gateway REST API stack. Deploys a Lambda function fronted by a Regional
+  API Gateway REST API with proxy integration. Supports response streaming (RESPONSE_STREAM)
+  and custom domain via Route 53. AuthType is parameterised: NONE (public) or AWS_IAM (SigV4).
+  ACM certificate must be in the same region as this stack (provided by cert stack output).
 
 # =============================================================================
 # Parameters
@@ -62,7 +62,7 @@ Parameters:
     Default: 900
     MinValue: 1
     MaxValue: 900
-    Description: "Lambda timeout in seconds."
+    Description: "Lambda timeout in seconds. Note: API Gateway REST has a max integration timeout of 29s."
 
   InvokeMode:
     Type: String
@@ -71,9 +71,11 @@ Parameters:
       - BUFFERED
       - RESPONSE_STREAM
     Description: >
-      Lambda Function URL invoke mode.
-      Use RESPONSE_STREAM for streaming responses (e.g. agentic AI, SSE).
+      Lambda invocation mode.
+      Use RESPONSE_STREAM for streaming responses (e.g. agentic AI, SSE, LLM token streaming).
       Use BUFFERED for standard request/response (e.g. REST APIs).
+      When RESPONSE_STREAM: integration URI targets /response-streaming-invocations and
+      ResponseTransferMode: STREAM is set on the method integration.
 
   AppEnvJson:
     Type: String
@@ -88,31 +90,40 @@ Parameters:
   DomainName:
     Type: String
     Default: ""
-    Description: "Custom domain (e.g. api.mydomain.com). Leave empty to use the CloudFront default *.cloudfront.net domain."
+    Description: "Custom domain (e.g. api.mydomain.com). Leave empty to use the API Gateway default execute-api URL."
 
   AcmCertificateArn:
     Type: String
     Default: ""
-    Description: "ARN of the ACM certificate in us-east-1. Required if DomainName is set. Provided by the cert stack (cf-ui-acm.yml) output."
+    Description: >
+      ARN of the ACM certificate in the SAME region as this stack (Regional API Gateway custom domain).
+      Provided by the cert stack (cf-ui-acm.yml) output. Required if DomainName is set.
 
   HostedZoneId:
     Type: String
     Default: ""
     Description: "Route53 Hosted Zone ID. Required if DomainName is set — used for creating the Route53 alias record."
 
-  OriginVerifySecret:
+  AuthType:
     Type: String
-    NoEcho: true
+    Default: NONE
+    AllowedValues:
+      - NONE
+      - AWS_IAM
     Description: >
-      Shared secret injected by CloudFront as X-Origin-Verify header.
-      Lambda validates this to ensure requests only come through CloudFront.
-      Set via GitHub secret ORIGIN_VERIFY_SECRET.
+      API Gateway method-level authorization.
+      NONE = publicly accessible (no signing required) — use this for browser-facing APIs;
+             enforce auth inside the Lambda handler (e.g. JWT validation).
+      AWS_IAM = requires SigV4 signing against the execute-api service — use this for
+                service-to-service calls from other AWS principals (EC2, Lambda, etc.).
+                Set via GitHub variable AWS_AUTH (true = AWS_IAM, false/omitted = NONE).
 
 # =============================================================================
 # Conditions
 # =============================================================================
 Conditions:
   HasCustomDomain: !Not [!Equals [!Ref DomainName, ""]]
+  IsStreaming:     !Equals [!Ref InvokeMode, "RESPONSE_STREAM"]
 
 # =============================================================================
 # Resources
@@ -190,7 +201,6 @@ Resources:
         Variables:
           NODE_ENV: !Ref Environment
           APP_CONFIG: !Ref AppEnvJson
-          ORIGIN_VERIFY_SECRET: !Ref OriginVerifySecret
       Code:
         ZipFile: |
           exports.handler = async (event) => ({
@@ -202,124 +212,161 @@ Resources:
           Value: !Ref AppName
 
   # --------------------------------------------------
-  # Lambda Function URL
-  # AuthType NONE — publicly accessible at the URL level.
-  # Access is restricted by the X-Origin-Verify secret header validated in Lambda.
+  # API Gateway REST API
+  # Regional endpoint — NEVER use EDGE here.
+  # Edge-optimized silently creates a CloudFront distribution and reintroduces
+  # the Host-header rewrite issues this architecture is designed to avoid.
+  # DisableExecuteApiEndpoint: false keeps the default execute-api URL active
+  # so Postman and Console testing work before a custom domain is configured.
   # --------------------------------------------------
-  LambdaFunctionUrl:
-    Type: AWS::Lambda::Url
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
     Properties:
-      TargetFunctionArn: !Ref LambdaFunction
-      AuthType: NONE
-      InvokeMode: !Ref InvokeMode
-      Cors:
-        AllowOrigins:
-          - "*"
-        AllowMethods:
-          - GET
-          - POST
-          - PUT
-          - PATCH
-          - DELETE
-        AllowHeaders:
-          - Authorization
-          - Content-Type
-        MaxAge: 300
-
-  # --------------------------------------------------
-  # Lambda Permission — Public access (InvokeFunctionUrl)
-  # Required for AuthType NONE — grants public invoke permission.
-  # Without this, Lambda returns 403 even with AuthType NONE.
-  # --------------------------------------------------
-  LambdaFunctionUrlPublicPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref LambdaFunction
-      Action: lambda:InvokeFunctionUrl
-      FunctionUrlAuthType: NONE
-      Principal: "*"
-
-  # --------------------------------------------------
-  # Lambda Permission — Public access (InvokeFunction)
-  # Since October 2025, Function URLs require BOTH lambda:InvokeFunctionUrl
-  # AND lambda:InvokeFunction permissions. Without this second permission,
-  # Lambda returns 403 even with the InvokeFunctionUrl permission above.
-  # --------------------------------------------------
-  LambdaFunctionPublicPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref LambdaFunction
-      Action: lambda:InvokeFunction
-      Principal: "*"
-
-  # --------------------------------------------------
-  # CloudFront Distribution
-  # Terminates TLS and forwards all HTTP methods to the Lambda Function URL.
-  # Injects X-Origin-Verify secret header so Lambda can verify the request
-  # came through CloudFront.
-  # Caching is disabled — Lambda handles all request logic.
-  # --------------------------------------------------
-  CloudFrontDistribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        Enabled: true
-        Comment: !Sub "CloudFront for ${AppName} Lambda"
-        HttpVersion: http2
-        PriceClass: PriceClass_100
-
-        Origins:
-          - Id: LambdaOrigin
-            # Strip https:// from the Function URL to get just the domain
-            DomainName: !Select
-              - 2
-              - !Split ["/", !GetAtt LambdaFunctionUrl.FunctionUrl]
-            CustomOriginConfig:
-              OriginProtocolPolicy: https-only
-              OriginSSLProtocols:
-                - TLSv1.2
-            OriginCustomHeaders:
-              - HeaderName: X-Origin-Verify
-                HeaderValue: !Ref OriginVerifySecret
-
-        DefaultCacheBehavior:
-          TargetOriginId: LambdaOrigin
-          ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # CachingDisabled
-          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # AllViewerExceptHostHeader
-          AllowedMethods:
-            - GET
-            - HEAD
-            - OPTIONS
-            - PUT
-            - POST
-            - PATCH
-            - DELETE
-          CachedMethods:
-            - GET
-            - HEAD
-            - OPTIONS
-          Compress: true
-
-        Aliases: !If
-          - HasCustomDomain
-          - - !Ref DomainName
-          - !Ref AWS::NoValue
-
-        ViewerCertificate: !If
-          - HasCustomDomain
-          - AcmCertificateArn: !Ref AcmCertificateArn
-            SslSupportMethod: sni-only
-            MinimumProtocolVersion: TLSv1.2_2021
-          - CloudFrontDefaultCertificate: true
-
+      Name: !Sub "${AppName}-api"
+      Description: !Sub "API Gateway REST API for ${AppName} Lambda"
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      DisableExecuteApiEndpoint: false
       Tags:
         - Key: app
           Value: !Ref AppName
 
   # --------------------------------------------------
+  # Proxy Resource — /{proxy+}
+  # Catches all paths and forwards them to the Lambda.
+  # The Lambda handler is responsible for routing by event.path / event.httpMethod.
+  # --------------------------------------------------
+  ProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: "{proxy+}"
+
+  # --------------------------------------------------
+  # Proxy Method — ANY /{proxy+}
+  # AWS_PROXY integration forwards the full request to Lambda and returns Lambda's
+  # response verbatim. ResponseTransferMode: STREAM activates response streaming
+  # (requires InvokeMode=RESPONSE_STREAM and awslambda.streamifyResponse in handler).
+  # Integration URI selects /response-streaming-invocations vs /invocations based on InvokeMode.
+  # TimeoutInMillis: 29000 — API Gateway REST hard max (29 s). For long-running workloads
+  # beyond 29 s, use InvokeMode=RESPONSE_STREAM so the first byte resets the timeout clock.
+  # --------------------------------------------------
+  ProxyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ProxyResource
+      HttpMethod: ANY
+      AuthorizationType: !Ref AuthType
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        TimeoutInMillis: 29000
+        ContentHandling: CONVERT_TO_TEXT
+        Uri: !If
+          - IsStreaming
+          - !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2021-11-15/functions/${LambdaFunction.Arn}/response-streaming-invocations"
+          - !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations"
+
+  # --------------------------------------------------
+  # Root Method — ANY /
+  # Handles requests to the bare domain (e.g. GET / → handler).
+  # --------------------------------------------------
+  RootMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !GetAtt RestApi.RootResourceId
+      HttpMethod: ANY
+      AuthorizationType: !Ref AuthType
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        TimeoutInMillis: 29000
+        ContentHandling: CONVERT_TO_TEXT
+        Uri: !If
+          - IsStreaming
+          - !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2021-11-15/functions/${LambdaFunction.Arn}/response-streaming-invocations"
+          - !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations"
+
+  # --------------------------------------------------
+  # API Gateway Deployment + Stage
+  # DependsOn both methods — CFN deploys resources concurrently and will create
+  # the Deployment before methods exist unless this dependency is explicit.
+  # Stage name "prod" is consistent with existing stack naming conventions.
+  # --------------------------------------------------
+  RestApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ProxyMethod
+      - RootMethod
+    Properties:
+      RestApiId: !Ref RestApi
+
+  RestApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref RestApi
+      DeploymentId: !Ref RestApiDeployment
+      StageName: prod
+      Tags:
+        - Key: app
+          Value: !Ref AppName
+
+  # --------------------------------------------------
+  # Lambda Permission — API Gateway invoke
+  # Grants API Gateway permission to invoke the Lambda for any method/path on this API.
+  # Required regardless of AuthType — API Gateway invokes Lambda under its own execution
+  # context; the permission allows the service principal to call lambda:InvokeFunction.
+  # --------------------------------------------------
+  LambdaApiGwPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/*/*"
+
+  # --------------------------------------------------
+  # API Gateway Custom Domain Name (conditional — only when DomainName is set)
+  # RegionalCertificateArn: cert must be in the SAME region as this stack (not us-east-1).
+  # EndpointConfiguration: REGIONAL — matches the REST API endpoint type.
+  # --------------------------------------------------
+  ApiCustomDomain:
+    Type: AWS::ApiGateway::DomainName
+    Condition: HasCustomDomain
+    Properties:
+      DomainName: !Ref DomainName
+      RegionalCertificateArn: !Ref AcmCertificateArn
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      SecurityPolicy: TLS_1_2
+      Tags:
+        - Key: app
+          Value: !Ref AppName
+
+  # --------------------------------------------------
+  # Base Path Mapping
+  # Maps the custom domain root to the prod stage.
+  # Callers use https://api.yourdomain.com/health (no /prod prefix).
+  # --------------------------------------------------
+  ApiBasePathMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    Condition: HasCustomDomain
+    DependsOn: RestApiStage
+    Properties:
+      DomainName: !Ref ApiCustomDomain
+      RestApiId: !Ref RestApi
+      Stage: prod
+
+  # --------------------------------------------------
   # Route53 Alias Record (conditional — only when DomainName is set)
-  # CloudFront's hosted zone ID is always Z2FDTNDATAQYW2 (AWS-managed constant).
+  # Points to the API Gateway Regional domain name + its hosted zone ID.
+  # Unlike CloudFront (which always used Z2FDTNDATAQYW2), the regional hosted zone ID
+  # is API-Gateway-specific and retrieved from the domain name resource.
   # --------------------------------------------------
   DnsRecord:
     Type: AWS::Route53::RecordSet
@@ -329,8 +376,8 @@ Resources:
       Name: !Ref DomainName
       Type: A
       AliasTarget:
-        DNSName: !GetAtt CloudFrontDistribution.DomainName
-        HostedZoneId: Z2FDTNDATAQYW2   # CloudFront global hosted zone ID — always this value
+        DNSName: !GetAtt ApiCustomDomain.RegionalDomainName
+        HostedZoneId: !GetAtt ApiCustomDomain.RegionalHostedZoneId
         EvaluateTargetHealth: false
 
 # =============================================================================
@@ -349,30 +396,24 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}-FunctionArn"
 
-  FunctionUrl:
-    Description: "Lambda Function URL (AuthType NONE — secured by X-Origin-Verify header, use CloudFront URL for access)"
-    Value: !GetAtt LambdaFunctionUrl.FunctionUrl
+  RestApiId:
+    Description: "API Gateway REST API ID"
+    Value: !Ref RestApi
     Export:
-      Name: !Sub "${AWS::StackName}-FunctionUrl"
+      Name: !Sub "${AWS::StackName}-RestApiId"
 
-  CloudFrontDistributionId:
-    Description: "CloudFront distribution ID — used by CI/CD deploy job to invalidate cache after code update"
-    Value: !Ref CloudFrontDistribution
+  ApiInvokeUrl:
+    Description: "API Gateway default invoke URL (always available — use this for Postman and CLI testing)"
+    Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
     Export:
-      Name: !Sub "${AWS::StackName}-CloudFrontDistributionId"
-
-  CloudFrontDomainName:
-    Description: "CloudFront default domain name — use this as your endpoint if no custom domain is configured"
-    Value: !Sub "https://${CloudFrontDistribution.DomainName}"
-    Export:
-      Name: !Sub "${AWS::StackName}-CloudFrontUrl"
+      Name: !Sub "${AWS::StackName}-ApiInvokeUrl"
 
   WebsiteUrl:
-    Description: "Live HTTPS URL (custom domain if configured, otherwise CloudFront default)"
+    Description: "Live HTTPS URL (custom domain if configured, otherwise API Gateway default)"
     Value: !If
       - HasCustomDomain
       - !Sub "https://${DomainName}"
-      - !Sub "https://${CloudFrontDistribution.DomainName}"
+      - !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
     Export:
       Name: !Sub "${AWS::StackName}-WebsiteUrl"
 
