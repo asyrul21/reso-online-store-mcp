@@ -18,14 +18,24 @@ declare const awslambda: {
   };
 };
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': CLIENT_URLS.join(','),
+const CORS_STATIC_HEADERS = {
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Authorization, Content-Type, client-country-code',
   'Content-Type': 'text/plain; charset=utf-8',
   'Transfer-Encoding': 'chunked',
   'X-Content-Type-Options': 'nosniff',
 };
+
+function getCorsHeaders(requestOrigin: string | undefined): Record<string, string> {
+  // Access-Control-Allow-Origin must be a single value — echo back the matched origin.
+  const allowedOrigin =
+    requestOrigin && CLIENT_URLS.includes(requestOrigin) ? requestOrigin : CLIENT_URLS[0] ?? '';
+  return {
+    ...CORS_STATIC_HEADERS,
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Vary': 'Origin',
+  };
+}
 
 export const handler = awslambda.streamifyResponse(
   async (event: APIGatewayProxyEventV2 | APIGatewayProxyEvent, responseStream: Writable, _context: any) => {
@@ -37,9 +47,11 @@ export const handler = awslambda.streamifyResponse(
       'GET'
     ).toUpperCase();
 
+    const requestOrigin = event.headers?.['origin'] || event.headers?.['Origin'];
+
     const httpStream = awslambda.HttpResponseStream.from(responseStream, {
       statusCode: 200,
-      headers: CORS_HEADERS,
+      headers: getCorsHeaders(requestOrigin),
     });
 
     if (method === 'OPTIONS') {
