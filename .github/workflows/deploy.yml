@@ -39,7 +39,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "22"
+  NODE_VERSION: "24"
   STACK_NAME: ${{ secrets.APP_NAME }}-stack
   AWS_REGION: ${{ secrets.AWS_REGION || 'ap-southeast-1' }}
 
@@ -56,6 +56,101 @@ jobs:
       (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
 
     steps:
+      - name: Validating Required Github Variables
+        env:
+          SECRET_AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          SECRET_AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          SECRET_APP_NAME:              ${{ secrets.APP_NAME }}
+          SECRET_DOMAIN_NAME:           ${{ secrets.DOMAIN_NAME }}
+          SECRET_HOSTED_ZONE_ID:        ${{ secrets.HOSTED_ZONE_ID }}
+          SECRET_APP_ENV_JSON:          ${{ secrets.APP_ENV_JSON }}
+          SECRET_AWS_REGION:            ${{ secrets.AWS_REGION }}
+          SECRET_MEMORY_SIZE:           ${{ secrets.MEMORY_SIZE }}
+          SECRET_TIMEOUT:               ${{ secrets.TIMEOUT }}
+          SECRET_INVOKE_MODE:           ${{ secrets.INVOKE_MODE }}
+          VAR_AWS_AUTH:                 ${{ vars.AWS_AUTH }}
+        run: |
+          set -uo pipefail
+          ERRORS=0
+
+          echo "============================================"
+          echo " Validating Required GitHub Variables"
+          echo "============================================"
+
+          check_required() {
+            local name="$1" value="$2"
+            if [[ -z "$value" ]]; then
+              echo "  ERROR: $name is required but not set"
+              ERRORS=$((ERRORS + 1))
+            fi
+          }
+
+          validate_domain() {
+            local domain="$1"
+            if [[ "$domain" =~ [A-Z] ]]; then
+              echo "  ERROR: DOMAIN_NAME must not contain uppercase letters — CloudFront and Route 53 require all-lowercase domains"
+              ERRORS=$((ERRORS + 1))
+            fi
+            if [[ ${#domain} -gt 253 ]]; then
+              echo "  ERROR: DOMAIN_NAME exceeds 253 characters"
+              ERRORS=$((ERRORS + 1))
+            fi
+            IFS='.' read -ra labels <<< "$domain"
+            for label in "${labels[@]}"; do
+              if [[ ${#label} -gt 63 ]]; then
+                echo "  ERROR: DOMAIN_NAME label '${label}' is ${#label} characters — each label must be 63 characters or fewer"
+                ERRORS=$((ERRORS + 1))
+              fi
+              if [[ ! "$label" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
+                echo "  ERROR: DOMAIN_NAME label '${label}' is invalid — only lowercase letters, numbers, and hyphens allowed; labels must not start or end with a hyphen"
+                ERRORS=$((ERRORS + 1))
+              fi
+            done
+          }
+
+          check_required "AWS_ACCESS_KEY_ID"     "$SECRET_AWS_ACCESS_KEY_ID"
+          check_required "AWS_SECRET_ACCESS_KEY" "$SECRET_AWS_SECRET_ACCESS_KEY"
+          check_required "APP_NAME"              "$SECRET_APP_NAME"
+          check_required "DOMAIN_NAME"           "$SECRET_DOMAIN_NAME"
+          check_required "HOSTED_ZONE_ID"        "$SECRET_HOSTED_ZONE_ID"
+          check_required "APP_ENV_JSON"          "$SECRET_APP_ENV_JSON"
+
+          [[ -n "$SECRET_DOMAIN_NAME" ]] && validate_domain "$SECRET_DOMAIN_NAME"
+
+          if [[ $ERRORS -gt 0 ]]; then
+            echo ""
+            echo "  Validation FAILED with $ERRORS error(s). Fix the above and re-run."
+            exit 1
+          fi
+
+          echo "  All required variables are set and valid."
+          echo ""
+
+          show_secret() { local n="$1" v="$2"; [[ -z "$v" ]] && printf "  %-28s : Not Provided\n" "$n" || printf "  %-28s : [VALUE REDACTED]\n" "$n"; }
+          show_val()    { local n="$1" v="$2" d="${3:-}"; if [[ -z "$v" ]]; then [[ -n "$d" ]] && printf "  %-28s : Not Provided (default: %s)\n" "$n" "$d" || printf "  %-28s : Not Provided\n" "$n"; else printf "  %-28s : %s\n" "$n" "$v"; fi; }
+
+          echo "============================================"
+          echo " GitHub Variables Summary"
+          echo "============================================"
+          echo ""
+          echo "  [AWS Credentials]"
+          show_secret "AWS_ACCESS_KEY_ID"     "$SECRET_AWS_ACCESS_KEY_ID"
+          show_secret "AWS_SECRET_ACCESS_KEY" "$SECRET_AWS_SECRET_ACCESS_KEY"
+          echo ""
+          echo "  [App Config]"
+          show_val    "APP_NAME"              "$SECRET_APP_NAME"
+          show_val    "DOMAIN_NAME"           "$SECRET_DOMAIN_NAME"
+          show_secret "HOSTED_ZONE_ID"        "$SECRET_HOSTED_ZONE_ID"
+          show_secret "APP_ENV_JSON"          "$SECRET_APP_ENV_JSON"
+          echo ""
+          echo "  [Optional Overrides]"
+          show_val    "AWS_REGION"            "$SECRET_AWS_REGION"            "ap-southeast-1"
+          show_val    "MEMORY_SIZE"           "$SECRET_MEMORY_SIZE"           "512"
+          show_val    "TIMEOUT"               "$SECRET_TIMEOUT"               "900"
+          show_val    "INVOKE_MODE"           "$SECRET_INVOKE_MODE"           "RESPONSE_STREAM"
+          show_val    "AWS_AUTH (var)"        "$VAR_AWS_AUTH"                 "NONE (public)"
+          echo "============================================"
+
       - name: Checkout code
         uses: actions/checkout@v4
 
