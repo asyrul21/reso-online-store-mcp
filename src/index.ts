@@ -61,6 +61,11 @@ export const handler = awslambda.streamifyResponse(
 
     logger.info('HttpStream Created');
 
+    if (method === 'OPTIONS') {
+      httpStream.end();
+      return;
+    }
+
     if (path === '/' || path === '/mcp/health' || path === '/mcp/health/') {
       let payload: unknown = 'Not provided';
       if (event.body) {
