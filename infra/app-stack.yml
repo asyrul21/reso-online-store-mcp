@@ -288,10 +288,27 @@ Resources:
           - !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations"
 
   # --------------------------------------------------
-  # Gateway Responses — attach CORS headers to all API Gateway-generated error
-  # responses (auth failures, integration errors, timeouts, etc.).
-  # Without these, any error before Lambda returns no ACAO header and the browser
-  # surfaces it as a CORS error instead of the real HTTP status.
+  # API Gateway Deployment + Stage
+  # DependsOn both methods — CFN deploys resources concurrently and will create
+  # the Deployment before methods exist unless this dependency is explicit.
+  # Stage name "prod" is consistent with existing stack naming conventions.
+  # --------------------------------------------------
+  # --------------------------------------------------
+  # Gateway Responses — attach CORS headers to API Gateway-generated error
+  # responses (auth failures, integration errors, timeouts, missing routes, etc.).
+  # Without these, any error before Lambda returns no Access-Control-Allow-Origin
+  # header and the browser surfaces it as a CORS error instead of the real status.
+  #
+  # Origin is echoed from the request header — for stricter control, replace
+  # `method.request.header.Origin` with a hard-coded "'https://yourapp.com'".
+  #
+  # CORS preflight (OPTIONS) is NOT handled here — it's forwarded to Lambda via
+  # ANY /{proxy+} and the handler must respond with the appropriate ACA-* headers.
+  # If using RESPONSE_STREAM, the handler MUST write at least one body byte before
+  # calling .end() — API Gateway REST + streaming returns 502 on zero-body responses.
+  #
+  # The Allow-Headers list below is the minimum (Authorization, Content-Type).
+  # Apps that send custom headers (e.g. x-client-country-code) must extend this list.
   # --------------------------------------------------
   GatewayResponseDefault4xx:
     Type: AWS::ApiGateway::GatewayResponse
@@ -300,7 +317,7 @@ Resources:
       ResponseType: DEFAULT_4XX
       ResponseParameters:
         gatewayresponse.header.Access-Control-Allow-Origin: method.request.header.Origin
-        gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,Content-Type,client-country-code'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,Content-Type'"
         gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
         gatewayresponse.header.Vary: "'Origin'"
 
@@ -311,16 +328,10 @@ Resources:
       ResponseType: DEFAULT_5XX
       ResponseParameters:
         gatewayresponse.header.Access-Control-Allow-Origin: method.request.header.Origin
-        gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,Content-Type,client-country-code'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,Content-Type'"
         gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
         gatewayresponse.header.Vary: "'Origin'"
 
-  # --------------------------------------------------
-  # API Gateway Deployment + Stage
-  # DependsOn all methods — CFN deploys resources concurrently and will create
-  # the Deployment before methods exist unless this dependency is explicit.
-  # Stage name "prod" is consistent with existing stack naming conventions.
-  # --------------------------------------------------
   RestApiDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
