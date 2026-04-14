@@ -307,8 +307,11 @@ Resources:
   # If using RESPONSE_STREAM, the handler MUST write at least one body byte before
   # calling .end() — API Gateway REST + streaming returns 502 on zero-body responses.
   #
-  # The Allow-Headers list below is the minimum (Authorization, Content-Type).
-  # Apps that send custom headers (e.g. x-client-country-code) must extend this list.
+  # The Allow-Headers list below covers the RESO defaults (Authorization,
+  # Content-Type, client-country-code). Apps that send additional custom headers
+  # must extend this list — anything not listed here will be blocked by the
+  # browser on the error path (auth failures, 5xx) even if the OPTIONS handler
+  # in Lambda allows it.
   # --------------------------------------------------
   GatewayResponseDefault4xx:
     Type: AWS::ApiGateway::GatewayResponse
@@ -317,7 +320,7 @@ Resources:
       ResponseType: DEFAULT_4XX
       ResponseParameters:
         gatewayresponse.header.Access-Control-Allow-Origin: method.request.header.Origin
-        gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,Content-Type'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,Content-Type,client-country-code'"
         gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
         gatewayresponse.header.Vary: "'Origin'"
 
@@ -328,7 +331,7 @@ Resources:
       ResponseType: DEFAULT_5XX
       ResponseParameters:
         gatewayresponse.header.Access-Control-Allow-Origin: method.request.header.Origin
-        gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,Content-Type'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,Content-Type,client-country-code'"
         gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
         gatewayresponse.header.Vary: "'Origin'"
 
