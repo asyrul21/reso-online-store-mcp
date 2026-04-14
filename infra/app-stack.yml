@@ -111,6 +111,15 @@ Parameters:
                 service-to-service calls from other AWS principals (EC2, Lambda, etc.).
                 Set via GitHub variable AWS_AUTH (true = AWS_IAM, false/omitted = NONE).
 
+  CorsAllowedOrigin:
+    Type: String
+    Default: "*"
+    Description: >
+      Value for Access-Control-Allow-Origin returned by the API Gateway preflight
+      response and error responses. Use "*" for public APIs without credentials,
+      or a specific origin (e.g. https://app.example.com) when the frontend uses
+      credentials: 'include'.
+
 # =============================================================================
 # Conditions
 # =============================================================================
@@ -288,8 +297,98 @@ Resources:
           - !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations"
 
   # --------------------------------------------------
+  # OPTIONS /{proxy+} — CORS preflight handled at API Gateway via MOCK integration.
+  # Preflight never reaches Lambda, so there is no cold-start delay on OPTIONS.
+  # AuthorizationType must be NONE — browsers send preflight without auth headers.
+  # --------------------------------------------------
+  ProxyOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ProxyResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 204}'
+        IntegrationResponses:
+          - StatusCode: 204
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${CorsAllowedOrigin}'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Headers: "'Authorization,Content-Type,client-country-code'"
+              method.response.header.Access-Control-Max-Age: "'300'"
+              method.response.header.Vary: "'Origin'"
+      MethodResponses:
+        - StatusCode: 204
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Max-Age: true
+            method.response.header.Vary: true
+
+  # --------------------------------------------------
+  # OPTIONS / — same MOCK preflight treatment for the root path.
+  # --------------------------------------------------
+  RootOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !GetAtt RestApi.RootResourceId
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 204}'
+        IntegrationResponses:
+          - StatusCode: 204
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${CorsAllowedOrigin}'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Headers: "'Authorization,Content-Type,client-country-code'"
+              method.response.header.Access-Control-Max-Age: "'300'"
+              method.response.header.Vary: "'Origin'"
+      MethodResponses:
+        - StatusCode: 204
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Max-Age: true
+            method.response.header.Vary: true
+
+  # --------------------------------------------------
+  # Gateway Responses — attach CORS headers to all API Gateway-generated error
+  # responses (auth failures, integration errors, timeouts, etc.).
+  # Without these, any error before Lambda returns no ACAO header and the browser
+  # surfaces it as a CORS error instead of the real HTTP status.
+  # --------------------------------------------------
+  GatewayResponseDefault4xx:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref RestApi
+      ResponseType: DEFAULT_4XX
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: !Sub "'${CorsAllowedOrigin}'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,Content-Type,client-country-code'"
+        gatewayresponse.header.Vary: "'Origin'"
+
+  GatewayResponseDefault5xx:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref RestApi
+      ResponseType: DEFAULT_5XX
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: !Sub "'${CorsAllowedOrigin}'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,Content-Type,client-country-code'"
+        gatewayresponse.header.Vary: "'Origin'"
+
+  # --------------------------------------------------
   # API Gateway Deployment + Stage
-  # DependsOn both methods — CFN deploys resources concurrently and will create
+  # DependsOn all methods — CFN deploys resources concurrently and will create
   # the Deployment before methods exist unless this dependency is explicit.
   # Stage name "prod" is consistent with existing stack naming conventions.
   # --------------------------------------------------
@@ -298,6 +397,8 @@ Resources:
     DependsOn:
       - ProxyMethod
       - RootMethod
+      - ProxyOptionsMethod
+      - RootOptionsMethod
     Properties:
       RestApiId: !Ref RestApi
 

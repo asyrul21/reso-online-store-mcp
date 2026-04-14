@@ -22,8 +22,6 @@ declare const awslambda: {
 const CORS_STATIC_HEADERS = {
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Authorization, Content-Type, client-country-code',
-  'Content-Type': 'text/plain; charset=utf-8',
-  'Transfer-Encoding': 'chunked',
   'X-Content-Type-Options': 'nosniff',
 };
 
@@ -61,11 +59,6 @@ export const handler = awslambda.streamifyResponse(
     });
 
     logger.info('HttpStream Created');
-
-    if (method === 'OPTIONS') {
-      httpStream.end();
-      return;
-    }
 
     if (path === '/' || path === '/mcp/health' || path === '/mcp/health/') {
       let payload: unknown = 'Not provided';
