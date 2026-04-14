@@ -34,8 +34,6 @@ export const handleAgentRequest = async (
 ): Promise<AgentHandlerError | null> => {
   const { token, countryCode, currency, conversation, context, isAdmin } = input;
 
-  logger.info('Verifying token...');
-
   // Verify token via the online-store-server /api/auth/me endpoint
   let user;
   try {
@@ -51,14 +49,10 @@ export const handleAgentRequest = async (
     return { statusCode: 401, message: 'Authentication failed', key: 'UNAUTHORIZED' };
   }
 
-  logger.info('Token verified:', { user });
-
   // Admin path requires the administrator user type
   if (isAdmin && user.userType?.name !== 'administrator') {
     return { statusCode: 403, message: 'Forbidden: admin access required', key: 'FORBIDDEN' };
   }
-
-  logger.info('Creating server client...');
 
   const serverClient = new ServerClient({ authToken: token, countryCode, currency });
 
@@ -66,16 +60,13 @@ export const handleAgentRequest = async (
   // Failures are non-fatal — the prompt will fall back to a safe default.
   let allowedCountryCodes: string[] = [];
   try {
-    logger.info('Fetching allowed country codes...');
     const data = await serverClient.get<{ countryCodes: string[] }>('/api/currency/country-codes');
-
     allowedCountryCodes = data.countryCodes ?? [];
+
     logger.info('Allowed country codes fetched:', { allowedCountryCodes });
   } catch (err: any) {
     logger.warn('country_codes_fetch_failed', { error: err.message });
   }
-
-  logger.info('Running agent...');
 
   const result = await runAgent(conversation, stream, { isAdmin, context, serverClient, allowedCountryCodes });
 

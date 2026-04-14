@@ -299,7 +299,7 @@ Resources:
       RestApiId: !Ref RestApi
       ResponseType: DEFAULT_4XX
       ResponseParameters:
-        gatewayresponse.header.Access-Control-Allow-Origin: method.request.header.origin
+        gatewayresponse.header.Access-Control-Allow-Origin: method.request.header.Origin
         gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,Content-Type,client-country-code'"
         gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
         gatewayresponse.header.Vary: "'Origin'"
@@ -310,7 +310,7 @@ Resources:
       RestApiId: !Ref RestApi
       ResponseType: DEFAULT_5XX
       ResponseParameters:
-        gatewayresponse.header.Access-Control-Allow-Origin: method.request.header.origin
+        gatewayresponse.header.Access-Control-Allow-Origin: method.request.header.Origin
         gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,Content-Type,client-country-code'"
         gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
         gatewayresponse.header.Vary: "'Origin'"

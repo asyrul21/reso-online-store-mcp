@@ -51,15 +51,13 @@ export const handler = awslambda.streamifyResponse(
     const corsHeaders = getCorsHeaders(requestOrigin);
 
     logger.info('Received request:', {
-      path, method, event, corsHeaders,
+      path, method, corsHeaders, requestOrigin,event, 
     });
 
     const httpStream = awslambda.HttpResponseStream.from(responseStream, {
       statusCode: 200,
       headers: corsHeaders,
     });
-
-    logger.info('HttpStream Created');
 
     if (method === 'OPTIONS') {
       // API Gateway REST + RESPONSE_STREAM rejects a zero-body streaming response
@@ -103,8 +101,6 @@ export const handler = awslambda.streamifyResponse(
     const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : undefined;
     const countryCode = event.headers?.['client-country-code'] || '';
 
-    logger.info('Authentication headers:', { authHeader, countryCode });
-
     if (!token) {
       httpStream.write(JSON.stringify({ message: 'Missing authorization token', key: 'MISSING_TOKEN' }));
       httpStream.end();
@@ -129,8 +125,6 @@ export const handler = awslambda.streamifyResponse(
       httpStream.end();
       return;
     }
-
-    logger.info('Conversation:', { conversation, context });
 
     const currency = event.queryStringParameters?.currency;
 
