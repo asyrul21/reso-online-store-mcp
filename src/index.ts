@@ -62,6 +62,10 @@ export const handler = awslambda.streamifyResponse(
     logger.info('HttpStream Created');
 
     if (method === 'OPTIONS') {
+      // API Gateway REST + RESPONSE_STREAM rejects a zero-body streaming response
+      // with a 502 InternalServerError — the prelude format requires at least one
+      // body chunk for the gateway to parse and forward the metadata headers.
+      httpStream.write(' ');
       httpStream.end();
       return;
     }
