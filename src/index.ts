@@ -22,6 +22,7 @@ declare const awslambda: {
 const CORS_STATIC_HEADERS = {
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Authorization, Content-Type, client-country-code',
+  'Access-Control-Allow-Credentials': 'true',
   'X-Content-Type-Options': 'nosniff',
 };
 

@@ -111,15 +111,6 @@ Parameters:
                 service-to-service calls from other AWS principals (EC2, Lambda, etc.).
                 Set via GitHub variable AWS_AUTH (true = AWS_IAM, false/omitted = NONE).
 
-  CorsAllowedOrigin:
-    Type: String
-    Default: "*"
-    Description: >
-      Value for Access-Control-Allow-Origin returned by the API Gateway preflight
-      response and error responses. Use "*" for public APIs without credentials,
-      or a specific origin (e.g. https://app.example.com) when the frontend uses
-      credentials: 'include'.
-
 # =============================================================================
 # Conditions
 # =============================================================================
@@ -315,9 +306,10 @@ Resources:
         IntegrationResponses:
           - StatusCode: 204
             ResponseParameters:
-              method.response.header.Access-Control-Allow-Origin: !Sub "'${CorsAllowedOrigin}'"
+              method.response.header.Access-Control-Allow-Origin: method.request.header.origin
               method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
               method.response.header.Access-Control-Allow-Headers: "'Authorization,Content-Type,client-country-code'"
+              method.response.header.Access-Control-Allow-Credentials: "'true'"
               method.response.header.Access-Control-Max-Age: "'300'"
               method.response.header.Vary: "'Origin'"
       MethodResponses:
@@ -326,6 +318,7 @@ Resources:
             method.response.header.Access-Control-Allow-Origin: true
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Credentials: true
             method.response.header.Access-Control-Max-Age: true
             method.response.header.Vary: true
 
@@ -346,9 +339,10 @@ Resources:
         IntegrationResponses:
           - StatusCode: 204
             ResponseParameters:
-              method.response.header.Access-Control-Allow-Origin: !Sub "'${CorsAllowedOrigin}'"
+              method.response.header.Access-Control-Allow-Origin: method.request.header.origin
               method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
               method.response.header.Access-Control-Allow-Headers: "'Authorization,Content-Type,client-country-code'"
+              method.response.header.Access-Control-Allow-Credentials: "'true'"
               method.response.header.Access-Control-Max-Age: "'300'"
               method.response.header.Vary: "'Origin'"
       MethodResponses:
@@ -357,6 +351,7 @@ Resources:
             method.response.header.Access-Control-Allow-Origin: true
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Credentials: true
             method.response.header.Access-Control-Max-Age: true
             method.response.header.Vary: true
 
@@ -372,8 +367,9 @@ Resources:
       RestApiId: !Ref RestApi
       ResponseType: DEFAULT_4XX
       ResponseParameters:
-        gatewayresponse.header.Access-Control-Allow-Origin: !Sub "'${CorsAllowedOrigin}'"
+        gatewayresponse.header.Access-Control-Allow-Origin: method.request.header.origin
         gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,Content-Type,client-country-code'"
+        gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
         gatewayresponse.header.Vary: "'Origin'"
 
   GatewayResponseDefault5xx:
@@ -382,8 +378,9 @@ Resources:
       RestApiId: !Ref RestApi
       ResponseType: DEFAULT_5XX
       ResponseParameters:
-        gatewayresponse.header.Access-Control-Allow-Origin: !Sub "'${CorsAllowedOrigin}'"
+        gatewayresponse.header.Access-Control-Allow-Origin: method.request.header.origin
         gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,Content-Type,client-country-code'"
+        gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
         gatewayresponse.header.Vary: "'Origin'"
 
   # --------------------------------------------------
