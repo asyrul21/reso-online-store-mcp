@@ -28,6 +28,7 @@ export type RunAgentOptions = {
   context?: string;
   serverClient: ServerClient;
   allowedCountryCodes?: string[];
+  userId?: string;
 };
 
 export const runAgent = async (
@@ -48,6 +49,7 @@ export const runAgent = async (
 
     const toolCtx: ToolContext = {
       serverClient: options.serverClient,
+      userId: options.userId,
     };
 
     const messages: ResponseInput = [

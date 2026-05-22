@@ -6,17 +6,19 @@ export const getUserAddresses: AiAgentTool = {
     strict: false,
     name: 'getUserAddresses',
     description:
-      'List all saved shipping addresses for a user. Accessible by the address owner or an admin.',
+      'List all saved shipping addresses for the logged-in user. The user ID is resolved automatically from the session.',
     parameters: {
       type: 'object',
-      properties: {
-        userId: { type: 'string', description: 'User ID whose addresses to fetch.' },
-      },
-      required: ['userId'],
+      properties: {},
+      required: [],
     },
   },
-  fn: async (args: { userId: string }, ctx: ToolContext) => {
-    return ctx.serverClient.get(`/api/user/${args.userId}/address`);
+  fn: async (_args: Record<string, never>, ctx: ToolContext) => {
+    const userId = ctx.userId;
+    if (!userId) {
+      return { error: 'Unable to resolve user identity. Please try again.' };
+    }
+    return ctx.serverClient.get(`/api/user/${userId}/address`);
   },
 };
 
@@ -26,11 +28,10 @@ export const createShippingAddress: AiAgentTool = {
     strict: false,
     name: 'createShippingAddress',
     description:
-      'Create a new shipping address for a user. The caller must be the owner of the userId. Address fields are validated and geocoded by the server.',
+      'Create a new shipping address for the logged-in user. The user ID is resolved automatically from the session. Address fields are validated and geocoded by the server.',
     parameters: {
       type: 'object',
       properties: {
-        userId: { type: 'string', description: 'User ID to create the address for (must match the authenticated user).' },
         name: { type: 'string', description: 'Label for the address (e.g. "Home", recipient name).' },
         line1: { type: 'string', description: 'Street address line 1.' },
         line2: { type: 'string', description: 'Street address line 2 (optional).' },
@@ -40,12 +41,15 @@ export const createShippingAddress: AiAgentTool = {
         state: { type: 'string', description: 'State or region (optional).' },
         countryCode: { type: 'string', description: 'ISO country code (defaults to MY).' },
       },
-      required: ['userId', 'name', 'line1', 'city', 'postalCode'],
+      required: ['name', 'line1', 'city', 'postalCode'],
     },
   },
   fn: async (args: Record<string, any>, ctx: ToolContext) => {
-    const { userId, ...body } = args;
-    return ctx.serverClient.post(`/api/user/${userId}/address`, body);
+    const userId = ctx.userId;
+    if (!userId) {
+      return { error: 'Unable to resolve user identity. Please try again.' };
+    }
+    return ctx.serverClient.post(`/api/user/${userId}/address`, args);
   },
 };
 
@@ -55,11 +59,10 @@ export const updateShippingAddress: AiAgentTool = {
     strict: false,
     name: 'updateShippingAddress',
     description:
-      'Update an existing shipping address. The caller must be the owner of the address. Pass isDeleted: true to soft-delete the address.',
+      'Update an existing shipping address for the logged-in user. The user ID is resolved automatically from the session. Pass isDeleted: true to soft-delete the address.',
     parameters: {
       type: 'object',
       properties: {
-        userId: { type: 'string', description: 'User ID who owns the address.' },
         addressId: { type: 'string', description: 'Address ID to update.' },
         name: { type: 'string', description: 'Updated label (optional).' },
         line1: { type: 'string', description: 'Updated street address line 1 (optional).' },
@@ -71,11 +74,15 @@ export const updateShippingAddress: AiAgentTool = {
         countryCode: { type: 'string', description: 'Updated country code (optional).' },
         isDeleted: { type: 'boolean', description: 'Set true to soft-delete the address.' },
       },
-      required: ['userId', 'addressId'],
+      required: ['addressId'],
     },
   },
   fn: async (args: Record<string, any>, ctx: ToolContext) => {
-    const { userId, addressId, ...body } = args;
+    const userId = ctx.userId;
+    if (!userId) {
+      return { error: 'Unable to resolve user identity. Please try again.' };
+    }
+    const { addressId, ...body } = args;
     return ctx.serverClient.put(`/api/user/${userId}/address/${addressId}`, body);
   },
 };

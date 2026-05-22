@@ -82,18 +82,20 @@ export const updateUserSelf: AiAgentTool = {
     type: 'function',
     strict: false,
     name: 'updateUserSelf',
-    description: `Update your own profile. Only the name field is accepted. AFFECTED MODULES: ${AppAllowedModules.USER}`,
+    description: `Update your own profile. Only the name field is accepted. The user ID is resolved automatically from the logged-in session. AFFECTED MODULES: ${AppAllowedModules.USER}`,
     parameters: {
       type: 'object',
       properties: {
-        userId: { type: 'string', description: 'ID of the user performing the update.' },
         name: { type: 'string', description: 'New name to set.' },
       },
-      required: ['userId', 'name'],
+      required: ['name'],
     },
   },
-  fn: async (args: { userId: string; name: string }, ctx: ToolContext) => {
-    const { userId, ...body } = args;
-    return ctx.serverClient.put(`/api/user/${userId}`, body);
+  fn: async (args: { name: string }, ctx: ToolContext) => {
+    const userId = ctx.userId;
+    if (!userId) {
+      return { error: 'Unable to resolve user identity. Please try again.' };
+    }
+    return ctx.serverClient.put(`/api/user/${userId}`, { name: args.name });
   },
 };

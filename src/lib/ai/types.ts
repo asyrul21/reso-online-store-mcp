@@ -3,6 +3,7 @@ import { ServerClient } from 'src/lib/http/client';
 
 export type ToolContext = {
   serverClient: ServerClient;
+  userId?: string;
 };
 
 export type AiAgentTool = {

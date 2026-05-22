@@ -68,7 +68,7 @@ export const handleAgentRequest = async (
     logger.warn('country_codes_fetch_failed', { error: err.message });
   }
 
-  const result = await runAgent(conversation, stream, { isAdmin, context, serverClient, allowedCountryCodes });
+  const result = await runAgent(conversation, stream, { isAdmin, context, serverClient, allowedCountryCodes, userId: user.id });
 
   if (result && (result as StreamError).streamError) {
     stream.write(JSON.stringify(result));
